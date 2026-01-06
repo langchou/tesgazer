@@ -103,12 +103,12 @@ type VehicleState struct {
 	SoftwareUpdate          *SoftwareUpdate `json:"software_update,omitempty"`
 	SpeedLimitMode          *SpeedLimitMode `json:"speed_limit_mode,omitempty"`
 	CenterDisplayState      int     `json:"center_display_state"`
-	DriverDoorOpen          bool    `json:"df"` // driver front
-	PassengerDoorOpen       bool    `json:"pf"` // passenger front
-	DriverRearDoorOpen      bool    `json:"dr"` // driver rear
-	PassengerRearDoorOpen   bool    `json:"pr"` // passenger rear
-	FrunkOpen               bool    `json:"ft"` // front trunk
-	TrunkOpen               bool    `json:"rt"` // rear trunk
+	DriverDoorOpen          int     `json:"df"` // driver front (0=closed, non-0=open)
+	PassengerDoorOpen       int     `json:"pf"` // passenger front
+	DriverRearDoorOpen      int     `json:"dr"` // driver rear
+	PassengerRearDoorOpen   int     `json:"pr"` // passenger rear
+	FrunkOpen               int     `json:"ft"` // front trunk
+	TrunkOpen               int     `json:"rt"` // rear trunk
 	DriverWindowOpen        int     `json:"fd_window"`
 	PassengerWindowOpen     int     `json:"fp_window"`
 	DriverRearWindowOpen    int     `json:"rd_window"`

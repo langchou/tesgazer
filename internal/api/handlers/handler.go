@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"encoding/json"
 	"net/http"
 	"strconv"
 
@@ -312,24 +311,8 @@ func (h *Handler) HandleWebSocket(c *gin.Context) {
 	client := ws.NewClient(h.wsHub, conn)
 	client.Register()
 
-	// 处理订阅消息
-	go client.ReadPump(func(msg []byte) {
-		var req struct {
-			Action string `json:"action"`
-			CarID  int64  `json:"car_id"`
-		}
-		if err := json.Unmarshal(msg, &req); err != nil {
-			return
-		}
-
-		switch req.Action {
-		case "subscribe":
-			client.SubscribeCar(req.CarID)
-		case "unsubscribe":
-			client.UnsubscribeCar(req.CarID)
-		}
-	})
-
+	// 启动读写协程
+	go client.ReadPump()
 	go client.WritePump()
 }
 

@@ -34,22 +34,22 @@ const (
 
 // VehicleState 车辆状态
 type VehicleState struct {
-	CarID         int64
-	CurrentState  string
-	Since         time.Time
-	BatteryLevel  int
-	RangeKm       float64
-	Latitude      float64
-	Longitude     float64
-	Speed         *int
-	Power         int
-	InsideTemp    *float64
-	OutsideTemp   *float64
-	Locked        bool
-	SentryMode    bool
-	PluggedIn     bool
-	ChargingState string
-	ChargerPower  int
+	CarID         int64     `json:"car_id"`
+	CurrentState  string    `json:"state"`
+	Since         time.Time `json:"since"`
+	BatteryLevel  int       `json:"battery_level"`
+	RangeKm       float64   `json:"range_km"`
+	Latitude      float64   `json:"latitude"`
+	Longitude     float64   `json:"longitude"`
+	Speed         *int      `json:"speed"`
+	Power         int       `json:"power"`
+	InsideTemp    *float64  `json:"inside_temp"`
+	OutsideTemp   *float64  `json:"outside_temp"`
+	Locked        bool      `json:"locked"`
+	SentryMode    bool      `json:"sentry_mode"`
+	PluggedIn     bool      `json:"plugged_in"`
+	ChargingState string    `json:"charging_state"`
+	ChargerPower  int       `json:"charger_power"`
 }
 
 // Machine 车辆状态机

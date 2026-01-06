@@ -1,18 +1,37 @@
 package ws
 
 import (
+	"encoding/json"
 	"sync"
 
 	"github.com/gorilla/websocket"
 	"go.uber.org/zap"
 )
 
+// MessageType WebSocket 消息类型
+const (
+	MsgTypeInit        = "init"         // 初始化数据（车辆列表+状态）
+	MsgTypeStateUpdate = "state_update" // 状态更新
+	MsgTypeError       = "error"        // 错误消息
+)
+
+// Message WebSocket 消息结构
+type Message struct {
+	Type string      `json:"type"`
+	Data interface{} `json:"data"`
+}
+
+// InitData 初始化数据
+type InitData struct {
+	Cars   interface{} `json:"cars"`
+	States interface{} `json:"states"`
+}
+
 // Client WebSocket 客户端
 type Client struct {
-	hub    *Hub
-	conn   *websocket.Conn
-	send   chan []byte
-	carIDs map[int64]bool // 订阅的车辆 ID
+	hub  *Hub
+	conn *websocket.Conn
+	send chan []byte
 }
 
 // Hub WebSocket 连接管理中心
@@ -23,6 +42,9 @@ type Hub struct {
 	register   chan *Client
 	unregister chan *Client
 	mu         sync.RWMutex
+
+	// 初始数据提供者回调
+	getInitData func() *InitData
 }
 
 // NewHub 创建 Hub
@@ -36,6 +58,11 @@ func NewHub(logger *zap.Logger) *Hub {
 	}
 }
 
+// SetInitDataProvider 设置初始数据提供者
+func (h *Hub) SetInitDataProvider(provider func() *InitData) {
+	h.getInitData = provider
+}
+
 // Run 运行 Hub
 func (h *Hub) Run() {
 	for {
@@ -44,7 +71,10 @@ func (h *Hub) Run() {
 			h.mu.Lock()
 			h.clients[client] = true
 			h.mu.Unlock()
-			h.logger.Debug("Client connected", zap.Int("total", len(h.clients)))
+			h.logger.Info("WebSocket client connected", zap.Int("total_clients", len(h.clients)))
+
+			// 发送初始数据
+			h.sendInitData(client)
 
 		case client := <-h.unregister:
 			h.mu.Lock()
@@ -53,7 +83,7 @@ func (h *Hub) Run() {
 				close(client.send)
 			}
 			h.mu.Unlock()
-			h.logger.Debug("Client disconnected", zap.Int("total", len(h.clients)))
+			h.logger.Info("WebSocket client disconnected", zap.Int("total_clients", len(h.clients)))
 
 		case message := <-h.broadcast:
 			h.mu.RLock()
@@ -61,6 +91,7 @@ func (h *Hub) Run() {
 				select {
 				case client.send <- message:
 				default:
+					// 慢消费者，关闭连接
 					close(client.send)
 					delete(h.clients, client)
 				}
@@ -70,25 +101,62 @@ func (h *Hub) Run() {
 	}
 }
 
+// sendInitData 发送初始数据给新连接的客户端
+func (h *Hub) sendInitData(client *Client) {
+	if h.getInitData == nil {
+		h.logger.Warn("No init data provider set")
+		return
+	}
+
+	initData := h.getInitData()
+	if initData == nil {
+		h.logger.Warn("Init data provider returned nil")
+		return
+	}
+
+	msg := Message{
+		Type: MsgTypeInit,
+		Data: initData,
+	}
+
+	data, err := json.Marshal(msg)
+	if err != nil {
+		h.logger.Error("Failed to marshal init data", zap.Error(err))
+		return
+	}
+
+	select {
+	case client.send <- data:
+		h.logger.Debug("Sent init data to client")
+	default:
+		h.logger.Warn("Failed to send init data, client buffer full")
+	}
+}
+
 // Broadcast 广播消息给所有客户端
 func (h *Hub) Broadcast(message []byte) {
 	h.broadcast <- message
 }
 
-// BroadcastToCarSubscribers 广播消息给订阅特定车辆的客户端
-func (h *Hub) BroadcastToCarSubscribers(carID int64, message []byte) {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-
-	for client := range h.clients {
-		if client.carIDs[carID] {
-			select {
-			case client.send <- message:
-			default:
-				// 跳过慢消费者
-			}
-		}
+// BroadcastMessage 广播结构化消息给所有客户端
+func (h *Hub) BroadcastMessage(msgType string, data interface{}) {
+	msg := Message{
+		Type: msgType,
+		Data: data,
 	}
+
+	jsonData, err := json.Marshal(msg)
+	if err != nil {
+		h.logger.Error("Failed to marshal broadcast message", zap.Error(err))
+		return
+	}
+
+	h.Broadcast(jsonData)
+}
+
+// BroadcastStateUpdate 广播状态更新
+func (h *Hub) BroadcastStateUpdate(state interface{}) {
+	h.BroadcastMessage(MsgTypeStateUpdate, state)
 }
 
 // ClientCount 获取客户端数量
@@ -101,10 +169,9 @@ func (h *Hub) ClientCount() int {
 // NewClient 创建客户端
 func NewClient(hub *Hub, conn *websocket.Conn) *Client {
 	return &Client{
-		hub:    hub,
-		conn:   conn,
-		send:   make(chan []byte, 256),
-		carIDs: make(map[int64]bool),
+		hub:  hub,
+		conn: conn,
+		send: make(chan []byte, 256),
 	}
 }
 
@@ -118,31 +185,19 @@ func (c *Client) Unregister() {
 	c.hub.unregister <- c
 }
 
-// SubscribeCar 订阅车辆
-func (c *Client) SubscribeCar(carID int64) {
-	c.carIDs[carID] = true
-}
-
-// UnsubscribeCar 取消订阅车辆
-func (c *Client) UnsubscribeCar(carID int64) {
-	delete(c.carIDs, carID)
-}
-
-// ReadPump 读取消息
-func (c *Client) ReadPump(onMessage func([]byte)) {
+// ReadPump 读取消息（保持连接活跃）
+func (c *Client) ReadPump() {
 	defer func() {
 		c.Unregister()
 		c.conn.Close()
 	}()
 
 	for {
-		_, message, err := c.conn.ReadMessage()
+		_, _, err := c.conn.ReadMessage()
 		if err != nil {
 			break
 		}
-		if onMessage != nil {
-			onMessage(message)
-		}
+		// 简化版不处理客户端消息，仅保持连接
 	}
 }
 

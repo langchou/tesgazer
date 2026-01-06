@@ -134,14 +134,18 @@ type apiResponse struct {
 func (c *Client) ListVehicles(ctx context.Context) ([]Vehicle, error) {
 	resp, err := c.doRequest(ctx, "GET", "/api/1/products", nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("list vehicles request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
+	body, _ := io.ReadAll(resp.Body)
+
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("list vehicles failed: status=%d body=%s", resp.StatusCode, string(body))
 	}
+
+	// 重新创建 reader 用于解码
+	resp.Body = io.NopCloser(strings.NewReader(string(body)))
 
 	var apiResp apiResponse
 	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {

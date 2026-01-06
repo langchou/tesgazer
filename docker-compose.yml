@@ -1,14 +1,15 @@
 version: "3.8"
 
 services:
-  teslamate-go:
+  # Tesgazer 后端核心
+  tesgazer:
     build: .
-    container_name: teslamate-go
+    container_name: tesgazer
     restart: unless-stopped
     ports:
       - "4000:4000"
     environment:
-      - DATABASE_URL=postgres://postgres:postgres@db:5432/teslamate_go?sslmode=disable
+      - DATABASE_URL=postgres://postgres:postgres@db:5432/tesgazer?sslmode=disable
       - DEBUG=true
       - TZ=Asia/Shanghai
     depends_on:
@@ -17,14 +18,27 @@ services:
     volumes:
       - ./tokens.json:/app/tokens.json
 
+  # 官方前端（可替换为其他皮肤）
+  tesgazer-ui:
+    image: langchou/tesgazer-ui:latest
+    container_name: tesgazer-ui
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    environment:
+      - API_URL=http://tesgazer:4000
+    depends_on:
+      - tesgazer
+
+  # 数据库
   db:
     image: postgres:15-alpine
-    container_name: teslamate-go-db
+    container_name: tesgazer-db
     restart: unless-stopped
     environment:
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=postgres
-      - POSTGRES_DB=teslamate_go
+      - POSTGRES_DB=tesgazer
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:

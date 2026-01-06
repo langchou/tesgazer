@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -85,25 +86,28 @@ func main() {
 		posRepo,
 		driveRepo,
 		chargeRepo,
+		wsHub,
 	)
+
+	// 设置 WebSocket Hub 的初始数据提供者
+	wsHub.SetInitDataProvider(func() *ws.InitData {
+		cars, err := vehicleService.GetCars(ctx)
+		if err != nil {
+			logger.Error("Failed to get cars for WebSocket init", zap.Error(err))
+			return nil
+		}
+		states := vehicleService.GetAllStates()
+		return &ws.InitData{
+			Cars:   cars,
+			States: states,
+		}
+	})
 
 	// 启动车辆服务（如果已认证）
 	if teslaClient.GetToken() != nil {
 		if err := vehicleService.Start(ctx); err != nil {
 			logger.Error("Failed to start vehicle service", zap.Error(err))
 		}
-
-		// 订阅状态更新并广播到 WebSocket
-		go func() {
-			stateCh := vehicleService.Subscribe()
-			for state := range stateCh {
-				data, _ := json.Marshal(map[string]interface{}{
-					"type": "state_update",
-					"data": state,
-				})
-				wsHub.BroadcastToCarSubscribers(state.CarID, data)
-			}
-		}()
 	}
 
 	// 创建 HTTP 处理器
@@ -137,9 +141,22 @@ func main() {
 			RefreshToken string `json:"refresh_token"`
 		}
 		if err := c.BindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
+			logger.Error("Invalid request body", zap.Error(err))
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
 			return
 		}
+
+		// 验证必填字段
+		if req.AccessToken == "" {
+			logger.Warn("Missing access_token in request")
+			c.JSON(http.StatusBadRequest, gin.H{"error": "access_token is required"})
+			return
+		}
+
+		logger.Info("Received auth token request",
+			zap.Int("access_token_len", len(req.AccessToken)),
+			zap.Int("refresh_token_len", len(req.RefreshToken)),
+		)
 
 		token := &tesla.Token{
 			AccessToken:  req.AccessToken,
@@ -149,18 +166,49 @@ func main() {
 		}
 		teslaClient.SetToken(token)
 
+		// 如果提供了 Refresh Token，先尝试刷新获取新的 Access Token
+		if req.RefreshToken != "" {
+			logger.Info("Attempting to refresh access token using refresh token...")
+			if err := teslaClient.RefreshToken(ctx); err != nil {
+				logger.Warn("Failed to refresh token, will try with provided access token",
+					zap.Error(err),
+				)
+			} else {
+				logger.Info("Successfully refreshed access token")
+				token = teslaClient.GetToken()
+			}
+		}
+
 		// 保存 token
 		if err := saveToken(cfg.TokenFile, token); err != nil {
 			logger.Error("Failed to save token", zap.Error(err))
+		} else {
+			logger.Info("Token saved to file", zap.String("file", cfg.TokenFile))
 		}
 
 		// 启动服务
+		logger.Info("Starting vehicle service...")
 		if err := vehicleService.Start(ctx); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to start service"})
+			logger.Error("Failed to start vehicle service",
+				zap.Error(err),
+				zap.String("error_detail", fmt.Sprintf("%+v", err)),
+			)
+			// 根据错误类型返回用户友好的提示
+			userMsg := "服务启动失败，请检查后端日志"
+			if strings.Contains(err.Error(), "401") || strings.Contains(err.Error(), "token expired") {
+				userMsg = "Token 已过期或无效，请重新获取"
+			} else if strings.Contains(err.Error(), "403") {
+				userMsg = "Token 权限不足"
+			} else if strings.Contains(err.Error(), "timeout") || strings.Contains(err.Error(), "connection") {
+				userMsg = "无法连接 Tesla API，请检查网络"
+			}
+			c.JSON(http.StatusInternalServerError, gin.H{"error": userMsg})
 			return
 		}
 
-		c.JSON(http.StatusOK, gin.H{"status": "ok"})
+		logger.Info("Vehicle service started successfully")
+
+		c.JSON(http.StatusOK, gin.H{"status": "ok", "message": "Authentication successful, syncing vehicles..."})
 	})
 
 	// 启动 HTTP 服务器

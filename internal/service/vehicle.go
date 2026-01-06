@@ -13,6 +13,7 @@ import (
 	"github.com/langchou/tesgazer/internal/models"
 	"github.com/langchou/tesgazer/internal/repository"
 	"github.com/langchou/tesgazer/internal/state"
+	"github.com/langchou/tesgazer/pkg/ws"
 )
 
 // VehicleService 车辆服务
@@ -25,11 +26,13 @@ type VehicleService struct {
 	driveRepo    *repository.DriveRepository
 	chargeRepo   *repository.ChargeRepository
 	stateManager *state.Manager
+	wsHub        *ws.Hub // WebSocket Hub
 
 	mu          sync.RWMutex
 	stopCh      chan struct{}
 	wg          sync.WaitGroup
 	subscribers []chan *state.VehicleState
+	running     bool // 标记服务是否正在运行
 }
 
 // NewVehicleService 创建车辆服务
@@ -41,6 +44,7 @@ func NewVehicleService(
 	posRepo *repository.PositionRepository,
 	driveRepo *repository.DriveRepository,
 	chargeRepo *repository.ChargeRepository,
+	wsHub *ws.Hub,
 ) *VehicleService {
 	svc := &VehicleService{
 		cfg:         cfg,
@@ -50,6 +54,7 @@ func NewVehicleService(
 		posRepo:     posRepo,
 		driveRepo:   driveRepo,
 		chargeRepo:  chargeRepo,
+		wsHub:       wsHub,
 		stopCh:      make(chan struct{}),
 	}
 
@@ -61,10 +66,24 @@ func NewVehicleService(
 
 // Start 启动服务
 func (s *VehicleService) Start(ctx context.Context) error {
+	s.mu.Lock()
+	if s.running {
+		s.mu.Unlock()
+		s.logger.Info("Vehicle service already running, skipping start")
+		return nil
+	}
+	// 重新初始化 stopCh（防止重复启动问题）
+	s.stopCh = make(chan struct{})
+	s.running = true
+	s.mu.Unlock()
+
 	s.logger.Info("Starting vehicle service")
 
 	// 同步车辆列表
 	if err := s.syncVehicles(ctx); err != nil {
+		s.mu.Lock()
+		s.running = false
+		s.mu.Unlock()
 		return fmt.Errorf("sync vehicles: %w", err)
 	}
 
@@ -72,14 +91,24 @@ func (s *VehicleService) Start(ctx context.Context) error {
 	s.wg.Add(1)
 	go s.pollLoop(ctx)
 
+	s.logger.Info("Vehicle service started, polling loop running")
 	return nil
 }
 
 // Stop 停止服务
 func (s *VehicleService) Stop() {
+	s.mu.Lock()
+	if !s.running {
+		s.mu.Unlock()
+		return
+	}
+	s.running = false
+	s.mu.Unlock()
+
 	s.logger.Info("Stopping vehicle service")
 	close(s.stopCh)
 	s.wg.Wait()
+	s.logger.Info("Vehicle service stopped")
 }
 
 // Subscribe 订阅状态更新
@@ -138,6 +167,10 @@ func (s *VehicleService) syncVehicles(ctx context.Context) error {
 func (s *VehicleService) pollLoop(ctx context.Context) {
 	defer s.wg.Done()
 
+	// 启动时立即执行一次轮询
+	s.logger.Info("Performing initial poll...")
+	s.pollAllVehicles(ctx)
+
 	ticker := time.NewTicker(s.cfg.PollIntervalOnline)
 	defer ticker.Stop()
 
@@ -161,9 +194,13 @@ func (s *VehicleService) pollAllVehicles(ctx context.Context) {
 		return
 	}
 
+	s.logger.Info("Polling all vehicles", zap.Int("count", len(cars)))
+
 	for _, car := range cars {
 		if err := s.pollVehicle(ctx, car); err != nil {
 			s.logger.Error("Failed to poll vehicle", zap.Error(err), zap.Int64("car_id", car.ID))
+		} else {
+			s.logger.Info("Successfully polled vehicle", zap.Int64("car_id", car.ID), zap.String("name", car.Name))
 		}
 	}
 }
@@ -199,8 +236,14 @@ func (s *VehicleService) pollVehicle(ctx context.Context, car *models.Car) error
 	// 处理状态变化
 	s.handleStateTransitions(ctx, car, machine, data)
 
-	// 通知订阅者
-	s.notifySubscribers(machine.GetState())
+	// 获取最新状态
+	currentState := machine.GetState()
+
+	// 通知内部订阅者
+	s.notifySubscribers(currentState)
+
+	// 广播到 WebSocket
+	s.broadcastState(currentState)
 
 	return nil
 }
@@ -393,7 +436,7 @@ func (s *VehicleService) onStateChange(carID int64, from, to string) {
 	s.logger.Info("Vehicle state changed", zap.Int64("car_id", carID), zap.String("from", from), zap.String("to", to))
 }
 
-// notifySubscribers 通知订阅者
+// notifySubscribers 通知订阅者（内部 channel 订阅者）
 func (s *VehicleService) notifySubscribers(vs *state.VehicleState) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -405,4 +448,18 @@ func (s *VehicleService) notifySubscribers(vs *state.VehicleState) {
 			// 跳过慢消费者
 		}
 	}
+}
+
+// broadcastState 广播状态到 WebSocket
+func (s *VehicleService) broadcastState(vs *state.VehicleState) {
+	if s.wsHub == nil {
+		return
+	}
+	s.wsHub.BroadcastStateUpdate(vs)
+	s.logger.Debug("Broadcasted state update via WebSocket", zap.Int64("car_id", vs.CarID))
+}
+
+// GetCars 获取车辆列表（用于 WebSocket 初始数据）
+func (s *VehicleService) GetCars(ctx context.Context) ([]*models.Car, error) {
+	return s.carRepo.List(ctx)
 }
