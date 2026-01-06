@@ -1,249 +1,94 @@
-# Tesgazer
+<p align="center">
+  <img src="icon.png" alt="tesgazer logo" width="200">
+</p>
+
+<h1 align="center">tesgazer</h1>
 
 <p align="center">
-  <strong>Tesla 车辆数据记录器</strong><br>
-  <em>使用 Go 语言构建的轻量级、高性能 Tesla 数据记录服务</em>
+  <strong>A lightweight, self-hosted Tesla vehicle data logger written in Go</strong>
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/Go-1.22+-00ADD8?style=flat-square&logo=go" alt="Go Version">
+  <img src="https://img.shields.io/badge/License-MIT-green?style=flat-square" alt="License">
+  <img src="https://img.shields.io/badge/PostgreSQL-15+-336791?style=flat-square&logo=postgresql" alt="PostgreSQL">
+  <a href="README_CN.md"><img src="https://img.shields.io/badge/文档-中文版-red?style=flat-square" alt="中文文档"></a>
 </p>
 
 ---
 
-## 简介
+## Features
 
-Tesgazer 是一个使用 Go 语言从零构建的 Tesla 车辆数据记录器。灵感来源于 [TeslaMate](https://github.com/teslamate-org/teslamate) 项目，但采用完全不同的技术栈重新实现，提供更轻量、更易部署的解决方案。
+- 🚗 **Vehicle Tracking** — Real-time location, battery, temperature, odometer
+- 🛣️ **Drive Logging** — Automatic trip detection with distance, duration, energy
+- ⚡ **Charge Sessions** — Complete charging history with power curves
+- 📊 **REST API** — Full-featured RESTful endpoints
+- 🔄 **WebSocket** — Real-time data push
+- 🎨 **Pluggable UI** — Comes with official frontend, or bring your own
 
-### 与 TeslaMate 的关系
-
-- **TeslaMate** 使用 Elixir/Phoenix 框架，功能完善但部署和维护有一定门槛
-- **Tesgazer** 是独立项目，使用 Go 语言重新实现核心功能，单二进制文件部署
-
-## 架构设计
-
-Tesgazer 采用**前后端分离**架构：
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    Tesgazer 生态系统                         │
-├─────────────────────────────────────────────────────────────┤
-│                                                             │
-│  tesgazer (本仓库)          tesgazer-ui (前端仓库)           │
-│  ┌─────────────────┐       ┌─────────────────┐             │
-│  │  Go 后端核心     │ ◄───► │  React 前端     │             │
-│  │  • REST API     │  API  │  • 官方默认皮肤  │             │
-│  │  • WebSocket    │       │  • 可替换       │             │
-│  │  • PostgreSQL   │       └─────────────────┘             │
-│  └─────────────────┘                                       │
-│                            ┌─────────────────┐             │
-│                            │  社区皮肤 ...    │             │
-│                            └─────────────────┘             │
-└─────────────────────────────────────────────────────────────┘
-```
-
-- **后端 (tesgazer)**: 纯 API 服务，无前端代码
-- **前端 (tesgazer-ui)**: 独立仓库，可替换为任意皮肤
-- **皮肤市场**: 社区可开发各种前端皮肤
-
-## 功能特性
-
-- 🚗 **车辆数据采集** - 实时记录位置、电量、温度、里程等数据
-- 🛣️ **行程记录** - 自动识别并记录每次行程的详细信息
-- ⚡ **充电记录** - 完整记录充电过程，包括功率曲线
-- 📊 **REST API** - 完整的 RESTful API 接口
-- 🔄 **实时推送** - WebSocket 实时数据推送
-- 🗄️ **PostgreSQL** - 可靠的数据存储
-- 🐳 **Docker 支持** - 一键部署
-- 🎨 **前端可插拔** - 支持自定义前端皮肤
-
-## 快速开始
-
-### Docker Compose (推荐)
+## Quick Start
 
 ```bash
-# 克隆项目
 git clone https://github.com/langchou/tesgazer.git
 cd tesgazer
-
-# 复制配置
-cp .env.example .env
-
-# 启动
 docker-compose up -d
 ```
 
-### 本地运行
+Open `http://localhost:3000`, enter your Tesla token, done.
 
-```bash
-# 安装依赖
-go mod tidy
+> Get token via [Tesla Auth](https://github.com/adriankumpf/tesla_auth) or similar tools.
 
-# 启动 PostgreSQL
-docker run -d --name postgres \
-  -e POSTGRES_USER=postgres \
-  -e POSTGRES_PASSWORD=postgres \
-  -e POSTGRES_DB=tesgazer \
-  -p 5432:5432 \
-  postgres:15-alpine
+## API Reference
 
-# 复制配置
-cp .env.example .env
+### Authentication
 
-# 运行
-go run ./cmd/server
+```http
+POST /api/auth/token
+Content-Type: application/json
+
+{"access_token": "...", "refresh_token": "..."}
 ```
 
-### 开发模式（Air 热重载）
+### Endpoints
 
-```bash
-# 安装 Air
-go install github.com/air-verse/air@latest
-
-# 启动热重载（修改代码自动重新编译）
-air
-```
-
-## 配置说明
-
-| 环境变量 | 说明 | 默认值 |
-|---------|------|--------|
-| `PORT` | HTTP 服务端口 | `4000` |
-| `DEBUG` | 调试模式 | `false` |
-| `DATABASE_URL` | PostgreSQL 连接地址 | - |
-| `POLL_INTERVAL_ONLINE` | 在线状态轮询间隔 | `10s` |
-| `POLL_INTERVAL_ASLEEP` | 睡眠状态轮询间隔 | `60s` |
-| `POLL_INTERVAL_CHARGING` | 充电状态轮询间隔 | `30s` |
-
-## API 文档
-
-### 认证
-
-首次使用需要设置 Tesla API Token：
-
-```bash
-curl -X POST http://localhost:4000/api/auth/token \
-  -H "Content-Type: application/json" \
-  -d '{
-    "access_token": "your_access_token",
-    "refresh_token": "your_refresh_token"
-  }'
-```
-
-> 💡 获取 Token 可以使用 [Tesla Auth](https://github.com/adriankumpf/tesla_auth) 等第三方工具
-
-### 车辆 API
-
-```bash
-# 获取车辆列表
-GET /api/cars
-
-# 获取车辆详情
-GET /api/cars/:id
-
-# 获取实时状态
-GET /api/cars/:id/state
-
-# 获取统计信息
-GET /api/cars/:id/stats
-```
-
-### 行程 API
-
-```bash
-# 获取行程列表
-GET /api/cars/:id/drives?page=1&per_page=20
-
-# 获取行程详情
-GET /api/drives/:id
-
-# 获取行程轨迹
-GET /api/drives/:id/positions
-```
-
-### 充电 API
-
-```bash
-# 获取充电列表
-GET /api/cars/:id/charges?page=1&per_page=20
-
-# 获取充电详情
-GET /api/charges/:id
-
-# 获取充电曲线数据
-GET /api/charges/:id/details
-```
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/cars` | List vehicles |
+| GET | `/api/cars/:id` | Vehicle details |
+| GET | `/api/cars/:id/state` | Real-time state |
+| GET | `/api/cars/:id/drives` | Drive history |
+| GET | `/api/cars/:id/charges` | Charge history |
+| GET | `/api/drives/:id` | Drive details |
+| GET | `/api/drives/:id/positions` | Drive trajectory |
+| GET | `/api/charges/:id` | Charge details |
 
 ### WebSocket
 
-连接 `ws://localhost:4000/ws` 订阅实时数据：
-
 ```javascript
-const ws = new WebSocket('ws://localhost:4000/ws');
+const ws = new WebSocket('ws://localhost:4000/ws')
 
-// 订阅车辆
-ws.send(JSON.stringify({ action: 'subscribe', car_id: 1 }));
-
-// 接收更新
 ws.onmessage = (event) => {
-  const data = JSON.parse(event.data);
-  console.log('State update:', data);
-};
+  const { type, data } = JSON.parse(event.data)
+  // type: 'init' | 'state_update'
+}
 ```
 
-## 项目结构
+## Configuration
 
-```
-tesgazer/
-├── cmd/
-│   └── server/           # 程序入口
-│       └── main.go
-├── internal/
-│   ├── api/
-│   │   ├── handlers/     # HTTP 处理器
-│   │   └── tesla/        # Tesla API 客户端
-│   ├── config/           # 配置管理
-│   ├── models/           # 数据模型
-│   ├── repository/       # 数据访问层
-│   ├── service/          # 业务逻辑
-│   └── state/            # 车辆状态机
-├── pkg/
-│   └── ws/               # WebSocket 模块
-├── .env.example
-├── docker-compose.yml
-├── Dockerfile
-├── go.mod
-└── README.md
-```
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `PORT` | Server port | `4000` |
+| `DATABASE_URL` | PostgreSQL connection | — |
+| `POLL_INTERVAL_ONLINE` | Online polling | `10s` |
+| `POLL_INTERVAL_ASLEEP` | Asleep polling | `60s` |
+| `POLL_INTERVAL_CHARGING` | Charging polling | `30s` |
 
-## 技术栈
+## License
 
-- **语言**: Go 1.22+
-- **Web 框架**: Gin
-- **数据库**: PostgreSQL + pgx
-- **WebSocket**: gorilla/websocket
-- **状态机**: looplab/fsm
-- **日志**: zap
-- **配置**: godotenv
-
-## 开发计划
-
-- [ ] Grafana 仪表盘支持
-- [ ] MQTT 集成
-- [ ] 地理围栏
-- [ ] 费用统计
-- [ ] 数据导出
-
-## 前端皮肤
-
-| 皮肤 | 说明 | 链接 |
-|------|------|------|
-| **tesgazer-ui** | 官方默认前端 | [GitHub](https://github.com/langchou/tesgazer-ui) |
-
-> 💡 想开发自己的皮肤？查看 [tesgazer-ui](https://github.com/langchou/tesgazer-ui) 了解 API 对接方式，并添加 `tesgazer-skin` 标签发布你的作品！
-
-## 许可证
-
-MIT License
+[MIT](LICENSE)
 
 ---
 
 <p align="center">
-  <sub>Inspired by <a href="https://github.com/teslamate-org/teslamate">TeslaMate</a></sub>
+  <sub>Inspired by <a href="https://github.com/teslamate-org/teslamate">TeslaMate</a> ❤️</sub>
 </p>

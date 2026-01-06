@@ -35,7 +35,7 @@ func main() {
 	logger := initLogger(cfg.Debug)
 	defer logger.Sync()
 
-	logger.Info("Starting Tesgazer", zap.String("port", cfg.ServerPort))
+	logger.Info("Starting tesgazer", zap.String("port", cfg.ServerPort))
 
 	// 创建 context
 	ctx, cancel := context.WithCancel(context.Background())

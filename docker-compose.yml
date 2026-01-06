@@ -1,7 +1,7 @@
 version: "3.8"
 
 services:
-  # Tesgazer 后端核心
+  # tesgazer 后端核心
   tesgazer:
     build: .
     container_name: tesgazer
