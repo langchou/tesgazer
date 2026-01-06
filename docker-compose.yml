@@ -1,0 +1,37 @@
+version: "3.8"
+
+services:
+  teslamate-go:
+    build: .
+    container_name: teslamate-go
+    restart: unless-stopped
+    ports:
+      - "4000:4000"
+    environment:
+      - DATABASE_URL=postgres://postgres:postgres@db:5432/teslamate_go?sslmode=disable
+      - DEBUG=true
+      - TZ=Asia/Shanghai
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./tokens.json:/app/tokens.json
+
+  db:
+    image: postgres:15-alpine
+    container_name: teslamate-go-db
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=teslamate_go
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
