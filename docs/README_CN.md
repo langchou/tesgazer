@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="icon.png" alt="tesgazer logo" width="200">
+  <img src="../assets/logo.png" alt="tesgazer logo" width="200">
 </p>
 
 <h1 align="center">tesgazer</h1>
@@ -12,7 +12,7 @@
   <img src="https://img.shields.io/badge/Go-1.22+-00ADD8?style=flat-square&logo=go" alt="Go Version">
   <img src="https://img.shields.io/badge/License-MIT-green?style=flat-square" alt="License">
   <img src="https://img.shields.io/badge/PostgreSQL-15+-336791?style=flat-square&logo=postgresql" alt="PostgreSQL">
-  <a href="README.md"><img src="https://img.shields.io/badge/Docs-English-blue?style=flat-square" alt="English"></a>
+  <a href="../README.md"><img src="https://img.shields.io/badge/Docs-English-blue?style=flat-square" alt="English"></a>
 </p>
 
 ---
