@@ -10,7 +10,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/Go-1.22+-00ADD8?style=flat-square&logo=go" alt="Go Version">
-  <img src="https://img.shields.io/badge/License-MIT-green?style=flat-square" alt="License">
+  <img src="https://img.shields.io/badge/License-GPL--3.0-blue?style=flat-square" alt="License">
   <img src="https://img.shields.io/badge/PostgreSQL-15+-336791?style=flat-square&logo=postgresql" alt="PostgreSQL">
   <a href="../README.md"><img src="https://img.shields.io/badge/Docs-English-blue?style=flat-square" alt="English"></a>
 </p>
@@ -90,7 +90,7 @@ ws.onmessage = (event) => {
 
 ## 许可证
 
-[MIT](LICENSE)
+[GPL-3.0](../LICENSE)
 
 ---
 

@@ -28,12 +28,12 @@ type Config struct {
 	PollIntervalCharging time.Duration
 	PollIntervalDriving  time.Duration
 
-	// Polling - 指数退避参数 (参考 TeslaMate)
+	// Polling - 指数退避参数
 	PollBackoffInitial time.Duration // 初始退避间隔
 	PollBackoffMax     time.Duration // 最大退避间隔
 	PollBackoffFactor  float64       // 退避因子 (通常为 2)
 
-	// Sleep/Suspend 配置 (参考 TeslaMate)
+	// Sleep/Suspend 配置
 	SuspendAfterIdleMin int           // 空闲多少分钟后自动暂停 (默认 15 分钟)
 	SuspendPollInterval time.Duration // 暂停状态下的轮询间隔 (默认 21 分钟)
 	RequireNotUnlocked  bool          // 是否要求车辆必须锁定才能休眠
@@ -54,7 +54,7 @@ func Load() (*Config, error) {
 	cfg := &Config{
 		ServerPort:              getEnv("PORT", "4000"),
 		Debug:                   getEnvBool("DEBUG", false),
-		DatabaseURL:             getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/teslamate_go?sslmode=disable"),
+		DatabaseURL:             getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/tesgazer?sslmode=disable"),
 		TeslaAuthHost:           getEnv("TESLA_AUTH_HOST", "https://auth.tesla.com"),
 		TeslaAPIHost:            getEnv("TESLA_API_HOST", "https://owner-api.teslamotors.com"),
 		TeslaClientID:           getEnv("TESLA_CLIENT_ID", "ownerapi"),

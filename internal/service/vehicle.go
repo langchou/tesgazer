@@ -186,7 +186,7 @@ func (s *VehicleService) syncVehicles(ctx context.Context) error {
 	return nil
 }
 
-// pollLoop 轮询循环 - 实现指数退避策略 (参考 TeslaMate)
+// pollLoop 轮询循环 - 实现指数退避策略
 // 策略说明:
 // - online 状态: 使用 PollIntervalOnline (默认 15s)
 // - driving 状态: 使用 PollIntervalDriving (默认 3s)
@@ -317,8 +317,7 @@ func (s *VehicleService) updateNextPollTime(carID int64, now time.Time) {
 			zap.Duration("interval", newInterval))
 
 	case state.StateSuspended:
-		// 暂停日志状态：使用较长的轮询间隔，让车辆有机会休眠
-		// 参考 TeslaMate: 默认 21 分钟
+		// 暂停日志状态：使用较长的轮询间隔，让车辆有机会休眠（默认 21 分钟）
 		newInterval = s.cfg.SuspendPollInterval
 		s.logger.Debug("Vehicle suspended, using suspend poll interval",
 			zap.Int64("car_id", carID),
@@ -470,7 +469,7 @@ func (s *VehicleService) pollVehicle(ctx context.Context, car *models.Car) error
 	s.broadcastState(currentState)
 
 	// 尝试自动暂停（只在 online 状态下检查）
-	// 参考 TeslaMate: 空闲一段时间后自动暂停日志，允许车辆进入休眠
+	// 空闲一段时间后自动暂停日志，允许车辆进入休眠
 	if machine.CurrentState() == state.StateOnline {
 		s.tryToSuspend(car.ID, machine, data)
 	}
@@ -480,7 +479,6 @@ func (s *VehicleService) pollVehicle(ctx context.Context, car *models.Car) error
 
 // pollVehicleLightweight 轻量轮询 - 只检查车辆状态，不唤醒车辆
 // 用于 suspended/asleep/offline 状态，避免因轮询导致车辆无法休眠
-// 参考 TeslaMate: fetch_with_unreachable_assumption
 func (s *VehicleService) pollVehicleLightweight(ctx context.Context, car *models.Car) error {
 	machine := s.stateManager.GetOrCreate(car.ID, "")
 	currentState := machine.CurrentState()
@@ -895,7 +893,7 @@ func (s *VehicleService) updateCarConfig(ctx context.Context, car *models.Car, c
 }
 
 // ============================================================================
-// TeslaMate 风格的休眠机制实现
+// 智能休眠机制实现
 // ============================================================================
 
 // SleepBlockReason 休眠阻止原因
@@ -916,7 +914,7 @@ const (
 	SleepBlockDownloadingUpdate SleepBlockReason = "downloading_update"
 )
 
-// canFallAsleep 检查车辆是否可以进入休眠 (参考 TeslaMate can_fall_asleep)
+// canFallAsleep 检查车辆是否可以进入休眠
 // 返回空字符串表示可以休眠，否则返回阻止原因
 func (s *VehicleService) canFallAsleep(data *tesla.VehicleData) SleepBlockReason {
 	// 1. 用户在场
@@ -990,7 +988,7 @@ func (s *VehicleService) canFallAsleep(data *tesla.VehicleData) SleepBlockReason
 	return SleepBlockNone
 }
 
-// tryToSuspend 尝试进入暂停状态 (参考 TeslaMate try_to_suspend)
+// tryToSuspend 尝试进入暂停状态
 // 在 online 状态下调用，检查是否应该暂停日志以允许车辆休眠
 func (s *VehicleService) tryToSuspend(carID int64, machine *state.Machine, data *tesla.VehicleData) {
 	currentState := machine.CurrentState()

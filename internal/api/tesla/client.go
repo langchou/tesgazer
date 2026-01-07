@@ -119,7 +119,7 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body io.Rea
 
 	req.Header.Set("Authorization", "Bearer "+c.token.AccessToken)
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "TeslaMate-Go/1.0")
+	req.Header.Set("User-Agent", "Tesgazer/1.0")
 
 	return c.httpClient.Do(req)
 }
