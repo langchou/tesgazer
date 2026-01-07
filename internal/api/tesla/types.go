@@ -95,6 +95,7 @@ type DriveState struct {
 // VehicleState 车辆状态
 type VehicleState struct {
 	APIVersion              int     `json:"api_version"`
+	CarVersion              string  `json:"car_version"` // 软件版本
 	Odometer                float64 `json:"odometer"` // 英里
 	Locked                  bool    `json:"locked"`
 	SentryMode              bool    `json:"sentry_mode"`
@@ -115,6 +116,11 @@ type VehicleState struct {
 	PassengerRearWindowOpen int     `json:"rp_window"`
 	IsUserPresent           bool    `json:"is_user_present"`
 	VehicleName             string  `json:"vehicle_name"`
+	// TPMS 胎压数据 (bar)
+	TpmsPressureFL          *float64 `json:"tpms_pressure_fl,omitempty"` // 左前
+	TpmsPressureFR          *float64 `json:"tpms_pressure_fr,omitempty"` // 右前
+	TpmsPressureRL          *float64 `json:"tpms_pressure_rl,omitempty"` // 左后
+	TpmsPressureRR          *float64 `json:"tpms_pressure_rr,omitempty"` // 右后
 	Timestamp               int64   `json:"timestamp"`
 }
 

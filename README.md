@@ -23,8 +23,11 @@
 - 🛣️ **Drive Logging** — Automatic trip detection with distance, duration, energy
 - ⚡ **Charge Sessions** — Complete charging history with power curves
 - 📊 **REST API** — Full-featured RESTful endpoints
-- 🔄 **WebSocket** — Real-time data push
+- 🔄 **WebSocket** — Real-time data push to frontend
 - 🎨 **Pluggable UI** — Comes with official frontend, or bring your own
+- ⚡ **Tesla Streaming API** — Sub-second wake detection via WebSocket
+- 😴 **Smart Sleep** — Zero vampire drain with intelligent suspend/resume
+- 🔁 **Dual-Link Architecture** — RESTful polling + Streaming for reliability
 
 ## Quick Start
 
@@ -58,6 +61,8 @@ Content-Type: application/json
 | GET | `/api/cars/:id/state` | Real-time state |
 | GET | `/api/cars/:id/drives` | Drive history |
 | GET | `/api/cars/:id/charges` | Charge history |
+| POST | `/api/cars/:id/suspend` | Suspend logging (allow sleep) |
+| POST | `/api/cars/:id/resume` | Resume logging |
 | GET | `/api/drives/:id` | Drive details |
 | GET | `/api/drives/:id/positions` | Drive trajectory |
 | GET | `/api/charges/:id` | Charge details |

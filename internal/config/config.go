@@ -22,10 +22,26 @@ type Config struct {
 	TeslaClientID    string
 	TeslaRedirectURI string
 
-	// Polling
-	PollIntervalOnline  time.Duration
-	PollIntervalAsleep  time.Duration
+	// Polling - 基础间隔
+	PollIntervalOnline   time.Duration
+	PollIntervalAsleep   time.Duration
 	PollIntervalCharging time.Duration
+	PollIntervalDriving  time.Duration
+
+	// Polling - 指数退避参数 (参考 TeslaMate)
+	PollBackoffInitial time.Duration // 初始退避间隔
+	PollBackoffMax     time.Duration // 最大退避间隔
+	PollBackoffFactor  float64       // 退避因子 (通常为 2)
+
+	// Sleep/Suspend 配置 (参考 TeslaMate)
+	SuspendAfterIdleMin int           // 空闲多少分钟后自动暂停 (默认 15 分钟)
+	SuspendPollInterval time.Duration // 暂停状态下的轮询间隔 (默认 21 分钟)
+	RequireNotUnlocked  bool          // 是否要求车辆必须锁定才能休眠
+
+	// Tesla Streaming API 配置 (双链路架构)
+	UseStreamingAPI         bool          // 是否启用 Streaming API
+	StreamingHost           string        // Streaming WebSocket 地址
+	StreamingReconnectDelay time.Duration // 重连延迟
 
 	// Token 存储路径
 	TokenFile string
@@ -36,17 +52,27 @@ func Load() (*Config, error) {
 	_ = godotenv.Load()
 
 	cfg := &Config{
-		ServerPort:          getEnv("PORT", "4000"),
-		Debug:               getEnvBool("DEBUG", false),
-		DatabaseURL:         getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/teslamate_go?sslmode=disable"),
-		TeslaAuthHost:       getEnv("TESLA_AUTH_HOST", "https://auth.tesla.com"),
-		TeslaAPIHost:        getEnv("TESLA_API_HOST", "https://owner-api.teslamotors.com"),
-		TeslaClientID:       getEnv("TESLA_CLIENT_ID", "ownerapi"),
-		TeslaRedirectURI:    getEnv("TESLA_REDIRECT_URI", "https://auth.tesla.com/void/callback"),
-		PollIntervalOnline:  getEnvDuration("POLL_INTERVAL_ONLINE", 10*time.Second),
-		PollIntervalAsleep:  getEnvDuration("POLL_INTERVAL_ASLEEP", 60*time.Second),
-		PollIntervalCharging: getEnvDuration("POLL_INTERVAL_CHARGING", 30*time.Second),
-		TokenFile:           getEnv("TOKEN_FILE", "tokens.json"),
+		ServerPort:              getEnv("PORT", "4000"),
+		Debug:                   getEnvBool("DEBUG", false),
+		DatabaseURL:             getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/teslamate_go?sslmode=disable"),
+		TeslaAuthHost:           getEnv("TESLA_AUTH_HOST", "https://auth.tesla.com"),
+		TeslaAPIHost:            getEnv("TESLA_API_HOST", "https://owner-api.teslamotors.com"),
+		TeslaClientID:           getEnv("TESLA_CLIENT_ID", "ownerapi"),
+		TeslaRedirectURI:        getEnv("TESLA_REDIRECT_URI", "https://auth.tesla.com/void/callback"),
+		PollIntervalOnline:      getEnvDuration("POLL_INTERVAL_ONLINE", 15*time.Second),
+		PollIntervalAsleep:      getEnvDuration("POLL_INTERVAL_ASLEEP", 30*time.Second),
+		PollIntervalCharging:    getEnvDuration("POLL_INTERVAL_CHARGING", 5*time.Second),
+		PollIntervalDriving:     getEnvDuration("POLL_INTERVAL_DRIVING", 3*time.Second),
+		PollBackoffInitial:      getEnvDuration("POLL_BACKOFF_INITIAL", 1*time.Second),
+		PollBackoffMax:          getEnvDuration("POLL_BACKOFF_MAX", 30*time.Second),
+		PollBackoffFactor:       getEnvFloat("POLL_BACKOFF_FACTOR", 2.0),
+		SuspendAfterIdleMin:     getEnvInt("SUSPEND_AFTER_IDLE_MIN", 15),
+		SuspendPollInterval:     getEnvDuration("SUSPEND_POLL_INTERVAL", 21*time.Minute),
+		RequireNotUnlocked:      getEnvBool("REQUIRE_NOT_UNLOCKED", false),
+		UseStreamingAPI:         getEnvBool("USE_STREAMING_API", true), // 默认启用
+		StreamingHost:           getEnv("STREAMING_HOST", "wss://streaming.vn.cloud.tesla.cn/streaming/"), // 中国区域名
+		StreamingReconnectDelay: getEnvDuration("STREAMING_RECONNECT_DELAY", 5*time.Second),
+		TokenFile:               getEnv("TOKEN_FILE", "tokens.json"),
 	}
 
 	return cfg, nil
@@ -74,6 +100,26 @@ func getEnvDuration(key string, defaultValue time.Duration) time.Duration {
 		d, err := time.ParseDuration(value)
 		if err == nil {
 			return d
+		}
+	}
+	return defaultValue
+}
+
+func getEnvFloat(key string, defaultValue float64) float64 {
+	if value := os.Getenv(key); value != "" {
+		f, err := strconv.ParseFloat(value, 64)
+		if err == nil {
+			return f
+		}
+	}
+	return defaultValue
+}
+
+func getEnvInt(key string, defaultValue int) int {
+	if value := os.Getenv(key); value != "" {
+		i, err := strconv.Atoi(value)
+		if err == nil {
+			return i
 		}
 	}
 	return defaultValue

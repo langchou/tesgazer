@@ -60,6 +60,8 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 		api.GET("/cars", h.ListCars)
 		api.GET("/cars/:id", h.GetCar)
 		api.GET("/cars/:id/state", h.GetCarState)
+		api.POST("/cars/:id/suspend", h.SuspendLogging)  // 暂停日志记录
+		api.POST("/cars/:id/resume", h.ResumeLogging)    // 恢复日志记录
 
 		// 行程
 		api.GET("/cars/:id/drives", h.ListDrives)
@@ -126,6 +128,52 @@ func (h *Handler) GetCarState(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"data": state})
+}
+
+// SuspendLogging 暂停日志记录
+// POST /api/cars/:id/suspend
+// 手动暂停车辆的日志记录，允许车辆进入休眠以减少吸血鬼功耗
+func (h *Handler) SuspendLogging(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid car ID"})
+		return
+	}
+
+	if err := h.vehicleService.SuspendLogging(id); err != nil {
+		h.logger.Error("Failed to suspend logging", zap.Error(err), zap.Int64("car_id", id))
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	h.logger.Info("Logging suspended via API", zap.Int64("car_id", id))
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Logging suspended",
+		"car_id":  id,
+	})
+}
+
+// ResumeLogging 恢复日志记录
+// POST /api/cars/:id/resume
+// 手动恢复车辆的日志记录
+func (h *Handler) ResumeLogging(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid car ID"})
+		return
+	}
+
+	if err := h.vehicleService.ResumeLogging(id); err != nil {
+		h.logger.Error("Failed to resume logging", zap.Error(err), zap.Int64("car_id", id))
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	h.logger.Info("Logging resumed via API", zap.Int64("car_id", id))
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Logging resumed",
+		"car_id":  id,
+	})
 }
 
 // ListDrives 获取行程列表

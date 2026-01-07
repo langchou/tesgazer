@@ -35,6 +35,11 @@ type Position struct {
 	InsideTemp  *float64  `json:"inside_temp,omitempty" db:"inside_temp"`
 	OutsideTemp *float64  `json:"outside_temp,omitempty" db:"outside_temp"`
 	Elevation   *int      `json:"elevation,omitempty" db:"elevation"`   // 海拔 (米)
+	// TPMS 胎压数据 (bar)
+	TpmsPressureFL *float64 `json:"tpms_pressure_fl,omitempty" db:"tpms_pressure_fl"` // 左前
+	TpmsPressureFR *float64 `json:"tpms_pressure_fr,omitempty" db:"tpms_pressure_fr"` // 右前
+	TpmsPressureRL *float64 `json:"tpms_pressure_rl,omitempty" db:"tpms_pressure_rl"` // 左后
+	TpmsPressureRR *float64 `json:"tpms_pressure_rr,omitempty" db:"tpms_pressure_rr"` // 右后
 	RecordedAt  time.Time `json:"recorded_at" db:"recorded_at"`
 }
 

@@ -52,6 +52,7 @@ func (db *DB) Migrate(ctx context.Context) error {
 		migrationCreateStates,
 		migrationCreateGeofences,
 		migrationCreateTokens,
+		migrationAddTpmsToPositions,
 	}
 
 	for _, m := range migrations {
@@ -200,4 +201,12 @@ CREATE TABLE IF NOT EXISTS tokens (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
+`
+
+// 添加 TPMS 胎压字段到 positions 表
+const migrationAddTpmsToPositions = `
+ALTER TABLE positions ADD COLUMN IF NOT EXISTS tpms_pressure_fl DOUBLE PRECISION;
+ALTER TABLE positions ADD COLUMN IF NOT EXISTS tpms_pressure_fr DOUBLE PRECISION;
+ALTER TABLE positions ADD COLUMN IF NOT EXISTS tpms_pressure_rl DOUBLE PRECISION;
+ALTER TABLE positions ADD COLUMN IF NOT EXISTS tpms_pressure_rr DOUBLE PRECISION;
 `
