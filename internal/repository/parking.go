@@ -28,9 +28,9 @@ func (r *ParkingRepository) Create(ctx context.Context, parking *models.Parking)
 			start_locked, start_sentry_mode, start_doors_open, start_windows_open,
 			start_frunk_open, start_trunk_open, start_is_climate_on, start_is_user_present,
 			start_tpms_pressure_fl, start_tpms_pressure_fr, start_tpms_pressure_rl, start_tpms_pressure_rr,
-			car_version
+			car_version, address
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)
 		RETURNING id
 	`
 	err := r.db.Pool.QueryRow(ctx, query,
@@ -58,6 +58,7 @@ func (r *ParkingRepository) Create(ctx context.Context, parking *models.Parking)
 		parking.StartTpmsPressureRL,
 		parking.StartTpmsPressureRR,
 		parking.CarVersion,
+		parking.Address,
 	).Scan(&parking.ID)
 
 	if err != nil {
@@ -129,6 +130,49 @@ func (r *ParkingRepository) Complete(ctx context.Context, parking *models.Parkin
 	return nil
 }
 
+// UpdateSnapshot 更新活跃停车记录的快照信息
+func (r *ParkingRepository) UpdateSnapshot(ctx context.Context, parking *models.Parking) error {
+	query := `
+		UPDATE parkings SET
+			end_battery_level = $2,
+			end_range_km = $3,
+			end_odometer = $4,
+			end_inside_temp = $5,
+			end_outside_temp = $6,
+			end_sentry_mode = $7,
+			end_locked = $8,
+			end_doors_open = $9,
+			end_windows_open = $10,
+			end_frunk_open = $11,
+			end_trunk_open = $12,
+			end_is_climate_on = $13,
+			climate_used_min = $14,
+			sentry_mode_used_min = $15
+		WHERE id = $1 AND end_time IS NULL
+	`
+	_, err := r.db.Pool.Exec(ctx, query,
+		parking.ID,
+		parking.EndBatteryLevel,
+		parking.EndRangeKm,
+		parking.EndOdometer,
+		parking.EndInsideTemp,
+		parking.EndOutsideTemp,
+		parking.EndSentryMode,
+		parking.EndLocked,
+		parking.EndDoorsOpen,
+		parking.EndWindowsOpen,
+		parking.EndFrunkOpen,
+		parking.EndTrunkOpen,
+		parking.EndIsClimateOn,
+		parking.ClimateUsedMin,
+		parking.SentryModeUsedMin,
+	)
+	if err != nil {
+		return fmt.Errorf("update parking snapshot: %w", err)
+	}
+	return nil
+}
+
 // GetByID 获取停车记录
 func (r *ParkingRepository) GetByID(ctx context.Context, id int64) (*models.Parking, error) {
 	query := `
@@ -145,7 +189,7 @@ func (r *ParkingRepository) GetByID(ctx context.Context, id int64) (*models.Park
 			end_frunk_open, end_trunk_open, end_is_climate_on, end_is_user_present,
 			start_tpms_pressure_fl, start_tpms_pressure_fr, start_tpms_pressure_rl, start_tpms_pressure_rr,
 			end_tpms_pressure_fl, end_tpms_pressure_fr, end_tpms_pressure_rl, end_tpms_pressure_rr,
-			car_version
+			car_version, address
 		FROM parkings WHERE id = $1
 	`
 	parking := &models.Parking{}
@@ -199,6 +243,7 @@ func (r *ParkingRepository) GetByID(ctx context.Context, id int64) (*models.Park
 		&parking.EndTpmsPressureRL,
 		&parking.EndTpmsPressureRR,
 		&parking.CarVersion,
+		&parking.Address,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("get parking by id: %w", err)
@@ -222,7 +267,7 @@ func (r *ParkingRepository) ListByCarID(ctx context.Context, carID int64, limit,
 			end_frunk_open, end_trunk_open, end_is_climate_on, end_is_user_present,
 			start_tpms_pressure_fl, start_tpms_pressure_fr, start_tpms_pressure_rl, start_tpms_pressure_rr,
 			end_tpms_pressure_fl, end_tpms_pressure_fr, end_tpms_pressure_rl, end_tpms_pressure_rr,
-			car_version
+			car_version, address
 		FROM parkings WHERE car_id = $1 ORDER BY start_time DESC LIMIT $2 OFFSET $3
 	`
 	rows, err := r.db.Pool.Query(ctx, query, carID, limit, offset)
@@ -284,6 +329,7 @@ func (r *ParkingRepository) ListByCarID(ctx context.Context, carID int64, limit,
 			&parking.EndTpmsPressureRL,
 			&parking.EndTpmsPressureRR,
 			&parking.CarVersion,
+			&parking.Address,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("scan parking: %w", err)
@@ -320,7 +366,7 @@ func (r *ParkingRepository) GetActiveParking(ctx context.Context, carID int64) (
 			end_frunk_open, end_trunk_open, end_is_climate_on, end_is_user_present,
 			start_tpms_pressure_fl, start_tpms_pressure_fr, start_tpms_pressure_rl, start_tpms_pressure_rr,
 			end_tpms_pressure_fl, end_tpms_pressure_fr, end_tpms_pressure_rl, end_tpms_pressure_rr,
-			car_version
+			car_version, address
 		FROM parkings WHERE car_id = $1 AND end_time IS NULL ORDER BY start_time DESC LIMIT 1
 	`
 	parking := &models.Parking{}
@@ -374,6 +420,7 @@ func (r *ParkingRepository) GetActiveParking(ctx context.Context, carID int64) (
 		&parking.EndTpmsPressureRL,
 		&parking.EndTpmsPressureRR,
 		&parking.CarVersion,
+		&parking.Address,
 	)
 	if err != nil {
 		return nil, err // 可能是没有进行中的停车

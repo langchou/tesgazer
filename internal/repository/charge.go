@@ -21,8 +21,8 @@ func NewChargeRepository(db *DB) *ChargeRepository {
 // CreateProcess 创建充电过程
 func (r *ChargeRepository) CreateProcess(ctx context.Context, cp *models.ChargingProcess) error {
 	query := `
-		INSERT INTO charging_processes (car_id, position_id, geofence_id, start_time, start_battery_level, start_range_km)
-		VALUES ($1, $2, $3, $4, $5, $6)
+		INSERT INTO charging_processes (car_id, position_id, geofence_id, start_time, start_battery_level, start_range_km, address)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		RETURNING id
 	`
 	err := r.db.Pool.QueryRow(ctx, query,
@@ -32,6 +32,7 @@ func (r *ChargeRepository) CreateProcess(ctx context.Context, cp *models.Chargin
 		cp.StartTime,
 		cp.StartBatteryLevel,
 		cp.StartRangeKm,
+		cp.Address,
 	).Scan(&cp.ID)
 
 	if err != nil {
@@ -69,6 +70,33 @@ func (r *ChargeRepository) CompleteProcess(ctx context.Context, cp *models.Charg
 	return nil
 }
 
+// UpdateSnapshot 更新活跃充电过程的快照信息
+func (r *ChargeRepository) UpdateSnapshot(ctx context.Context, cp *models.ChargingProcess) error {
+	query := `
+		UPDATE charging_processes SET
+			end_battery_level = $2,
+			end_range_km = $3,
+			charge_energy_added = $4,
+			charger_power_max = $5,
+			outside_temp_avg = $6,
+			duration_min = $7
+		WHERE id = $1 AND end_time IS NULL
+	`
+	_, err := r.db.Pool.Exec(ctx, query,
+		cp.ID,
+		cp.EndBatteryLevel,
+		cp.EndRangeKm,
+		cp.ChargeEnergyAdded,
+		cp.ChargerPowerMax,
+		cp.OutsideTempAvg,
+		cp.DurationMin,
+	)
+	if err != nil {
+		return fmt.Errorf("update charging snapshot: %w", err)
+	}
+	return nil
+}
+
 // CreateCharge 创建充电详情记录
 func (r *ChargeRepository) CreateCharge(ctx context.Context, c *models.Charge) error {
 	query := `
@@ -99,7 +127,7 @@ func (r *ChargeRepository) CreateCharge(ctx context.Context, c *models.Charge) e
 func (r *ChargeRepository) GetProcessByID(ctx context.Context, id int64) (*models.ChargingProcess, error) {
 	query := `
 		SELECT id, car_id, position_id, geofence_id, start_time, end_time, start_battery_level, end_battery_level,
-			start_range_km, end_range_km, charge_energy_added, charger_power_max, duration_min, outside_temp_avg, cost
+			start_range_km, end_range_km, charge_energy_added, charger_power_max, duration_min, outside_temp_avg, cost, address
 		FROM charging_processes WHERE id = $1
 	`
 	cp := &models.ChargingProcess{}
@@ -119,6 +147,7 @@ func (r *ChargeRepository) GetProcessByID(ctx context.Context, id int64) (*model
 		&cp.DurationMin,
 		&cp.OutsideTempAvg,
 		&cp.Cost,
+		&cp.Address,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("get charging process: %w", err)
@@ -130,7 +159,7 @@ func (r *ChargeRepository) GetProcessByID(ctx context.Context, id int64) (*model
 func (r *ChargeRepository) ListProcessesByCarID(ctx context.Context, carID int64, limit, offset int) ([]*models.ChargingProcess, error) {
 	query := `
 		SELECT id, car_id, position_id, geofence_id, start_time, end_time, start_battery_level, end_battery_level,
-			start_range_km, end_range_km, charge_energy_added, charger_power_max, duration_min, outside_temp_avg, cost
+			start_range_km, end_range_km, charge_energy_added, charger_power_max, duration_min, outside_temp_avg, cost, address
 		FROM charging_processes WHERE car_id = $1 ORDER BY start_time DESC LIMIT $2 OFFSET $3
 	`
 	rows, err := r.db.Pool.Query(ctx, query, carID, limit, offset)
@@ -158,6 +187,7 @@ func (r *ChargeRepository) ListProcessesByCarID(ctx context.Context, carID int64
 			&cp.DurationMin,
 			&cp.OutsideTempAvg,
 			&cp.Cost,
+			&cp.Address,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("scan charging process: %w", err)
@@ -172,7 +202,7 @@ func (r *ChargeRepository) ListProcessesByCarID(ctx context.Context, carID int64
 func (r *ChargeRepository) GetActiveProcess(ctx context.Context, carID int64) (*models.ChargingProcess, error) {
 	query := `
 		SELECT id, car_id, position_id, geofence_id, start_time, end_time, start_battery_level, end_battery_level,
-			start_range_km, end_range_km, charge_energy_added, charger_power_max, duration_min, outside_temp_avg, cost
+			start_range_km, end_range_km, charge_energy_added, charger_power_max, duration_min, outside_temp_avg, cost, address
 		FROM charging_processes WHERE car_id = $1 AND end_time IS NULL ORDER BY start_time DESC LIMIT 1
 	`
 	cp := &models.ChargingProcess{}
@@ -192,6 +222,7 @@ func (r *ChargeRepository) GetActiveProcess(ctx context.Context, carID int64) (*
 		&cp.DurationMin,
 		&cp.OutsideTempAvg,
 		&cp.Cost,
+		&cp.Address,
 	)
 	if err != nil {
 		return nil, err

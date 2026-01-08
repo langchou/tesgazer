@@ -57,6 +57,8 @@ func (db *DB) Migrate(ctx context.Context) error {
 		migrationAddEnergyToDrives,
 		migrationCreateParkings,
 		migrationAddAddressToDrives,
+		migrationAddAddressToParkings,
+		migrationAddAddressToChargingProcesses,
 	}
 
 	for _, m := range migrations {
@@ -389,4 +391,14 @@ ALTER TABLE drives ADD COLUMN IF NOT EXISTS end_longitude DOUBLE PRECISION;
 -- 添加 JSONB 类型地址字段（结构化数据）
 ALTER TABLE drives ADD COLUMN IF NOT EXISTS start_address JSONB;
 ALTER TABLE drives ADD COLUMN IF NOT EXISTS end_address JSONB;
+`
+
+// 添加地址字段到 parkings 表
+const migrationAddAddressToParkings = `
+ALTER TABLE parkings ADD COLUMN IF NOT EXISTS address JSONB;
+`
+
+// 添加地址字段到 charging_processes 表
+const migrationAddAddressToChargingProcesses = `
+ALTER TABLE charging_processes ADD COLUMN IF NOT EXISTS address JSONB;
 `
