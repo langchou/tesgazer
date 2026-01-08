@@ -59,6 +59,7 @@ func main() {
 	posRepo := repository.NewPositionRepository(db)
 	driveRepo := repository.NewDriveRepository(db)
 	chargeRepo := repository.NewChargeRepository(db)
+	parkingRepo := repository.NewParkingRepository(db)
 
 	// 创建 Tesla API 客户端
 	teslaClient := tesla.NewClient(
@@ -86,6 +87,7 @@ func main() {
 		posRepo,
 		driveRepo,
 		chargeRepo,
+		parkingRepo,
 		wsHub,
 	)
 
@@ -117,6 +119,7 @@ func main() {
 		driveRepo,
 		chargeRepo,
 		posRepo,
+		parkingRepo,
 		vehicleService,
 		wsHub,
 	)

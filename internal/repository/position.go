@@ -139,3 +139,71 @@ func (r *PositionRepository) UpdateDriveID(ctx context.Context, positionID, driv
 	}
 	return nil
 }
+
+// DriveStats 行程统计数据
+type DriveStats struct {
+	SpeedMax       *int     // 最高速度 (km/h)
+	PowerMax       *int     // 最大功率 (kW，正值=耗电)
+	PowerMin       *int     // 最小功率 (kW，负值=回收)
+	InsideTempAvg  *float64 // 平均车内温度
+	OutsideTempAvg *float64 // 平均车外温度
+	EnergyUsedKwh  *float64 // 总耗电量 (kWh)
+	EnergyRegenKwh *float64 // 总回收电量 (kWh)
+}
+
+// GetDriveStats 获取行程统计数据
+func (r *PositionRepository) GetDriveStats(ctx context.Context, driveID int64) (*DriveStats, error) {
+	query := `
+		SELECT
+			MAX(speed) as speed_max,
+			MAX(power) as power_max,
+			MIN(power) as power_min,
+			AVG(inside_temp) as inside_temp_avg,
+			AVG(outside_temp) as outside_temp_avg
+		FROM positions
+		WHERE drive_id = $1
+	`
+	stats := &DriveStats{}
+	err := r.db.Pool.QueryRow(ctx, query, driveID).Scan(
+		&stats.SpeedMax,
+		&stats.PowerMax,
+		&stats.PowerMin,
+		&stats.InsideTempAvg,
+		&stats.OutsideTempAvg,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("get drive stats: %w", err)
+	}
+
+	// 计算能量消耗和回收（基于功率和时间间隔）
+	// power 单位是 kW，时间间隔约 3 秒
+	// 能量 = 功率 * 时间 = kW * (3/3600) h = kWh
+	energyQuery := `
+		WITH intervals AS (
+			SELECT
+				power,
+				EXTRACT(EPOCH FROM (
+					LEAD(recorded_at) OVER (ORDER BY recorded_at) - recorded_at
+				)) as interval_seconds
+			FROM positions
+			WHERE drive_id = $1 AND power IS NOT NULL
+		)
+		SELECT
+			COALESCE(SUM(CASE WHEN power > 0 THEN power * interval_seconds / 3600.0 ELSE 0 END), 0) as energy_used,
+			COALESCE(SUM(CASE WHEN power < 0 THEN ABS(power) * interval_seconds / 3600.0 ELSE 0 END), 0) as energy_regen
+		FROM intervals
+		WHERE interval_seconds IS NOT NULL AND interval_seconds < 60
+	`
+	var energyUsed, energyRegen float64
+	err = r.db.Pool.QueryRow(ctx, energyQuery, driveID).Scan(&energyUsed, &energyRegen)
+	if err == nil {
+		if energyUsed > 0 {
+			stats.EnergyUsedKwh = &energyUsed
+		}
+		if energyRegen > 0 {
+			stats.EnergyRegenKwh = &energyRegen
+		}
+	}
+
+	return stats, nil
+}

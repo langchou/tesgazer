@@ -21,8 +21,9 @@ func NewDriveRepository(db *DB) *DriveRepository {
 // Create 创建行程
 func (r *DriveRepository) Create(ctx context.Context, drive *models.Drive) error {
 	query := `
-		INSERT INTO drives (car_id, start_time, start_position_id, start_geofence_id, start_battery_level, start_range_km)
-		VALUES ($1, $2, $3, $4, $5, $6)
+		INSERT INTO drives (car_id, start_time, start_position_id, start_geofence_id, start_battery_level, start_range_km, start_odometer_km,
+			start_latitude, start_longitude, start_address)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		RETURNING id
 	`
 	err := r.db.Pool.QueryRow(ctx, query,
@@ -32,6 +33,10 @@ func (r *DriveRepository) Create(ctx context.Context, drive *models.Drive) error
 		drive.StartGeofenceID,
 		drive.StartBatteryLevel,
 		drive.StartRangeKm,
+		drive.StartOdometerKm,
+		drive.StartLatitude,
+		drive.StartLongitude,
+		drive.StartAddress,
 	).Scan(&drive.ID)
 
 	if err != nil {
@@ -55,8 +60,15 @@ func (r *DriveRepository) Complete(ctx context.Context, drive *models.Drive) err
 			power_max = $9,
 			power_min = $10,
 			inside_temp_avg = $11,
-			outside_temp_avg = $12
-		WHERE id = $13
+			outside_temp_avg = $12,
+			end_odometer_km = $13,
+			energy_used_kwh = $14,
+			energy_regen_kwh = $15,
+			end_latitude = $16,
+			end_longitude = $17,
+			end_address = $18,
+			start_address = $19
+		WHERE id = $20
 	`
 	_, err := r.db.Pool.Exec(ctx, query,
 		drive.EndTime,
@@ -71,6 +83,13 @@ func (r *DriveRepository) Complete(ctx context.Context, drive *models.Drive) err
 		drive.PowerMin,
 		drive.InsideTempAvg,
 		drive.OutsideTempAvg,
+		drive.EndOdometerKm,
+		drive.EnergyUsedKwh,
+		drive.EnergyRegenKwh,
+		drive.EndLatitude,
+		drive.EndLongitude,
+		drive.EndAddress,
+		drive.StartAddress,
 		drive.ID,
 	)
 	if err != nil {
@@ -84,7 +103,9 @@ func (r *DriveRepository) GetByID(ctx context.Context, id int64) (*models.Drive,
 	query := `
 		SELECT id, car_id, start_time, end_time, start_position_id, end_position_id, start_geofence_id, end_geofence_id,
 			distance_km, duration_min, start_battery_level, end_battery_level, start_range_km, end_range_km,
-			speed_max, power_max, power_min, inside_temp_avg, outside_temp_avg
+			start_odometer_km, end_odometer_km, speed_max, power_max, power_min, inside_temp_avg, outside_temp_avg,
+			energy_used_kwh, energy_regen_kwh,
+			start_address, end_address, start_latitude, start_longitude, end_latitude, end_longitude
 		FROM drives WHERE id = $1
 	`
 	drive := &models.Drive{}
@@ -103,11 +124,21 @@ func (r *DriveRepository) GetByID(ctx context.Context, id int64) (*models.Drive,
 		&drive.EndBatteryLevel,
 		&drive.StartRangeKm,
 		&drive.EndRangeKm,
+		&drive.StartOdometerKm,
+		&drive.EndOdometerKm,
 		&drive.SpeedMax,
 		&drive.PowerMax,
 		&drive.PowerMin,
 		&drive.InsideTempAvg,
 		&drive.OutsideTempAvg,
+		&drive.EnergyUsedKwh,
+		&drive.EnergyRegenKwh,
+		&drive.StartAddress,
+		&drive.EndAddress,
+		&drive.StartLatitude,
+		&drive.StartLongitude,
+		&drive.EndLatitude,
+		&drive.EndLongitude,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("get drive by id: %w", err)
@@ -120,7 +151,9 @@ func (r *DriveRepository) ListByCarID(ctx context.Context, carID int64, limit, o
 	query := `
 		SELECT id, car_id, start_time, end_time, start_position_id, end_position_id, start_geofence_id, end_geofence_id,
 			distance_km, duration_min, start_battery_level, end_battery_level, start_range_km, end_range_km,
-			speed_max, power_max, power_min, inside_temp_avg, outside_temp_avg
+			start_odometer_km, end_odometer_km, speed_max, power_max, power_min, inside_temp_avg, outside_temp_avg,
+			energy_used_kwh, energy_regen_kwh,
+			start_address, end_address, start_latitude, start_longitude, end_latitude, end_longitude
 		FROM drives WHERE car_id = $1 ORDER BY start_time DESC LIMIT $2 OFFSET $3
 	`
 	rows, err := r.db.Pool.Query(ctx, query, carID, limit, offset)
@@ -147,11 +180,21 @@ func (r *DriveRepository) ListByCarID(ctx context.Context, carID int64, limit, o
 			&drive.EndBatteryLevel,
 			&drive.StartRangeKm,
 			&drive.EndRangeKm,
+			&drive.StartOdometerKm,
+			&drive.EndOdometerKm,
 			&drive.SpeedMax,
 			&drive.PowerMax,
 			&drive.PowerMin,
 			&drive.InsideTempAvg,
 			&drive.OutsideTempAvg,
+			&drive.EnergyUsedKwh,
+			&drive.EnergyRegenKwh,
+			&drive.StartAddress,
+			&drive.EndAddress,
+			&drive.StartLatitude,
+			&drive.StartLongitude,
+			&drive.EndLatitude,
+			&drive.EndLongitude,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("scan drive: %w", err)
@@ -177,7 +220,9 @@ func (r *DriveRepository) GetActiveDrive(ctx context.Context, carID int64) (*mod
 	query := `
 		SELECT id, car_id, start_time, end_time, start_position_id, end_position_id, start_geofence_id, end_geofence_id,
 			distance_km, duration_min, start_battery_level, end_battery_level, start_range_km, end_range_km,
-			speed_max, power_max, power_min, inside_temp_avg, outside_temp_avg
+			start_odometer_km, end_odometer_km, speed_max, power_max, power_min, inside_temp_avg, outside_temp_avg,
+			energy_used_kwh, energy_regen_kwh,
+			start_address, end_address, start_latitude, start_longitude, end_latitude, end_longitude
 		FROM drives WHERE car_id = $1 AND end_time IS NULL ORDER BY start_time DESC LIMIT 1
 	`
 	drive := &models.Drive{}
@@ -196,11 +241,21 @@ func (r *DriveRepository) GetActiveDrive(ctx context.Context, carID int64) (*mod
 		&drive.EndBatteryLevel,
 		&drive.StartRangeKm,
 		&drive.EndRangeKm,
+		&drive.StartOdometerKm,
+		&drive.EndOdometerKm,
 		&drive.SpeedMax,
 		&drive.PowerMax,
 		&drive.PowerMin,
 		&drive.InsideTempAvg,
 		&drive.OutsideTempAvg,
+		&drive.EnergyUsedKwh,
+		&drive.EnergyRegenKwh,
+		&drive.StartAddress,
+		&drive.EndAddress,
+		&drive.StartLatitude,
+		&drive.StartLongitude,
+		&drive.EndLatitude,
+		&drive.EndLongitude,
 	)
 	if err != nil {
 		return nil, err // 可能是没有进行中的行程

@@ -8,6 +8,7 @@ import (
 
 	"go.uber.org/zap"
 
+	"github.com/langchou/tesgazer/internal/api/amap"
 	"github.com/langchou/tesgazer/internal/api/tesla"
 	"github.com/langchou/tesgazer/internal/config"
 	"github.com/langchou/tesgazer/internal/models"
@@ -21,10 +22,12 @@ type VehicleService struct {
 	cfg          *config.Config
 	logger       *zap.Logger
 	teslaClient  *tesla.Client
+	geocoder     *amap.GeocoderClient // 高德逆地理编码客户端
 	carRepo      *repository.CarRepository
 	posRepo      *repository.PositionRepository
 	driveRepo    *repository.DriveRepository
 	chargeRepo   *repository.ChargeRepository
+	parkingRepo  *repository.ParkingRepository
 	stateManager *state.Manager
 	wsHub        *ws.Hub // WebSocket Hub
 
@@ -39,10 +42,22 @@ type VehicleService struct {
 	lastPollTimes  map[int64]time.Time     // 每辆车上次轮询时间
 	lastUsedTimes  map[int64]time.Time     // 每辆车最后活跃时间 (用于自动休眠)
 
+	// 停车期间的累计数据 (per vehicle)
+	parkingClimateUsage  map[int64]time.Duration // 空调使用时长累计
+	parkingSentryUsage   map[int64]time.Duration // 哨兵模式使用时长累计
+	parkingLastCheck     map[int64]time.Time     // 上次检查时间
+	parkingTempSamples   map[int64][]tempSample  // 温度采样
+
 	// Tesla Streaming API 客户端 (双链路架构)
 	streamingClients map[int64]*tesla.StreamingClient // 每辆车的 Streaming 客户端
 	streamingCtx     context.Context                  // Streaming 上下文
 	streamingCancel  context.CancelFunc               // 取消函数
+}
+
+// tempSample 温度采样
+type tempSample struct {
+	insideTemp  *float64
+	outsideTemp *float64
 }
 
 // NewVehicleService 创建车辆服务
@@ -54,22 +69,37 @@ func NewVehicleService(
 	posRepo *repository.PositionRepository,
 	driveRepo *repository.DriveRepository,
 	chargeRepo *repository.ChargeRepository,
+	parkingRepo *repository.ParkingRepository,
 	wsHub *ws.Hub,
 ) *VehicleService {
+	// 创建高德逆地理编码客户端
+	geocoder := amap.NewGeocoderClient(cfg.AmapAPIKey, logger)
+	if geocoder.IsConfigured() {
+		logger.Info("Amap geocoder initialized")
+	} else {
+		logger.Warn("Amap API key not configured, address geocoding will be disabled")
+	}
+
 	svc := &VehicleService{
-		cfg:              cfg,
-		logger:           logger,
-		teslaClient:      teslaClient,
-		carRepo:          carRepo,
-		posRepo:          posRepo,
-		driveRepo:        driveRepo,
-		chargeRepo:       chargeRepo,
-		wsHub:            wsHub,
-		stopCh:           make(chan struct{}),
-		pollIntervals:    make(map[int64]time.Duration),
-		lastPollTimes:    make(map[int64]time.Time),
-		lastUsedTimes:    make(map[int64]time.Time),
-		streamingClients: make(map[int64]*tesla.StreamingClient),
+		cfg:                  cfg,
+		logger:               logger,
+		teslaClient:          teslaClient,
+		geocoder:             geocoder,
+		carRepo:              carRepo,
+		posRepo:              posRepo,
+		driveRepo:            driveRepo,
+		chargeRepo:           chargeRepo,
+		parkingRepo:          parkingRepo,
+		wsHub:                wsHub,
+		stopCh:               make(chan struct{}),
+		pollIntervals:        make(map[int64]time.Duration),
+		lastPollTimes:        make(map[int64]time.Time),
+		lastUsedTimes:        make(map[int64]time.Time),
+		parkingClimateUsage:  make(map[int64]time.Duration),
+		parkingSentryUsage:   make(map[int64]time.Duration),
+		parkingLastCheck:     make(map[int64]time.Time),
+		parkingTempSamples:   make(map[int64][]tempSample),
+		streamingClients:     make(map[int64]*tesla.StreamingClient),
 	}
 
 	// 创建状态管理器
@@ -448,16 +478,26 @@ func (s *VehicleService) pollVehicle(ctx context.Context, car *models.Car) error
 	// 更新状态机数据
 	s.updateMachineFromData(machine, data)
 
+	// 处理状态变化（驾驶、充电等）
+	// 注意：必须在记录位置之前处理状态变化，这样才能正确关联 drive_id
+	s.handleStateTransitions(ctx, car, machine, data)
+
 	// 记录位置（仅在线时）
 	if data.State == "online" && data.DriveState != nil {
 		pos := s.createPosition(car.ID, data)
+
+		// 如果正在驾驶，关联到当前活动的行程
+		if machine.CurrentState() == state.StateDriving {
+			activeDrive, err := s.driveRepo.GetActiveDrive(ctx, car.ID)
+			if err == nil && activeDrive != nil {
+				pos.DriveID = &activeDrive.ID
+			}
+		}
+
 		if err := s.posRepo.Create(ctx, pos); err != nil {
 			s.logger.Error("Failed to create position", zap.Error(err))
 		}
 	}
-
-	// 处理状态变化（驾驶、充电等）
-	s.handleStateTransitions(ctx, car, machine, data)
 
 	// 获取最新状态
 	currentState := machine.GetState()
@@ -713,6 +753,8 @@ func (s *VehicleService) handleStateTransitions(ctx context.Context, car *models
 	isDriving := data.DriveState != nil && data.DriveState.ShiftState != nil && *data.DriveState.ShiftState != "P"
 	if isDriving && currentState != state.StateDriving {
 		if machine.CanTransition(state.EventStartDriving) {
+			// 结束停车记录（如果有）
+			s.endParking(ctx, car, data)
 			machine.Trigger(state.EventStartDriving)
 			s.startDrive(ctx, car, data)
 			// 标记车辆为活跃状态，重置空闲计时器
@@ -721,6 +763,8 @@ func (s *VehicleService) handleStateTransitions(ctx context.Context, car *models
 	} else if !isDriving && currentState == state.StateDriving {
 		machine.Trigger(state.EventStopDriving)
 		s.endDrive(ctx, car, data)
+		// 开始停车记录
+		s.startParking(ctx, car, data)
 	}
 
 	// 检测充电状态
@@ -736,6 +780,11 @@ func (s *VehicleService) handleStateTransitions(ctx context.Context, car *models
 		machine.Trigger(state.EventStopCharging)
 		s.endCharging(ctx, car, data)
 	}
+
+	// 如果在停车状态（online 且不在驾驶/充电），更新停车统计
+	if currentState == state.StateOnline && !isDriving && !isCharging {
+		s.updateParkingStats(ctx, car, data)
+	}
 }
 
 // startDrive 开始行程
@@ -750,10 +799,42 @@ func (s *VehicleService) startDrive(ctx context.Context, car *models.Car, data *
 		drive.StartRangeKm = tesla.MilesToKm(data.ChargeState.EstBatteryRange)
 	}
 
+	// 记录起始里程表
+	if data.VehicleState != nil {
+		drive.StartOdometerKm = tesla.MilesToKm(data.VehicleState.Odometer)
+	}
+
+	// 记录起始位置坐标
+	if data.DriveState != nil {
+		lat := data.DriveState.Latitude
+		lng := data.DriveState.Longitude
+		drive.StartLatitude = &lat
+		drive.StartLongitude = &lng
+
+		// 异步进行逆地理编码（不阻塞行程开始）
+		if s.geocoder.IsConfigured() {
+			go func() {
+				address, err := s.geocoder.ReverseGeocode(context.Background(), lat, lng)
+				if err != nil {
+					s.logger.Warn("Failed to geocode start address",
+						zap.Int64("drive_id", drive.ID),
+						zap.Float64("lat", lat),
+						zap.Float64("lng", lng),
+						zap.Error(err))
+					return
+				}
+				drive.StartAddress = address
+				s.logger.Debug("Geocoded start address",
+					zap.Int64("drive_id", drive.ID),
+					zap.String("address", address.FormattedAddress))
+			}()
+		}
+	}
+
 	if err := s.driveRepo.Create(ctx, drive); err != nil {
 		s.logger.Error("Failed to create drive", zap.Error(err))
 	} else {
-		s.logger.Info("Started drive", zap.Int64("drive_id", drive.ID))
+		s.logger.Info("Started drive", zap.Int64("drive_id", drive.ID), zap.Float64("start_odometer_km", drive.StartOdometerKm))
 	}
 }
 
@@ -776,10 +857,86 @@ func (s *VehicleService) endDrive(ctx context.Context, car *models.Car, data *te
 		drive.EndRangeKm = &rangeKm
 	}
 
+	// 记录结束里程表并计算行驶距离
+	if data.VehicleState != nil {
+		endOdometer := tesla.MilesToKm(data.VehicleState.Odometer)
+		drive.EndOdometerKm = &endOdometer
+		// 根据里程表计算行驶距离
+		if drive.StartOdometerKm > 0 && endOdometer > drive.StartOdometerKm {
+			drive.DistanceKm = endOdometer - drive.StartOdometerKm
+		}
+	}
+
+	// 记录结束位置坐标并解析地址
+	if data.DriveState != nil {
+		lat := data.DriveState.Latitude
+		lng := data.DriveState.Longitude
+		drive.EndLatitude = &lat
+		drive.EndLongitude = &lng
+
+		// 逆地理编码结束地址
+		if s.geocoder.IsConfigured() {
+			address, err := s.geocoder.ReverseGeocode(ctx, lat, lng)
+			if err != nil {
+				s.logger.Warn("Failed to geocode end address",
+					zap.Int64("drive_id", drive.ID),
+					zap.Float64("lat", lat),
+					zap.Float64("lng", lng),
+					zap.Error(err))
+			} else {
+				drive.EndAddress = address
+				s.logger.Debug("Geocoded end address",
+					zap.Int64("drive_id", drive.ID),
+					zap.String("address", address.FormattedAddress))
+			}
+
+			// 如果起始地址还是空的，尝试解析起始地址
+			if drive.StartAddress == nil && drive.StartLatitude != nil && drive.StartLongitude != nil {
+				startAddr, err := s.geocoder.ReverseGeocode(ctx, *drive.StartLatitude, *drive.StartLongitude)
+				if err != nil {
+					s.logger.Warn("Failed to geocode start address",
+						zap.Int64("drive_id", drive.ID),
+						zap.Error(err))
+				} else {
+					drive.StartAddress = startAddr
+					s.logger.Debug("Geocoded start address (deferred)",
+						zap.Int64("drive_id", drive.ID),
+						zap.String("address", startAddr.FormattedAddress))
+				}
+			}
+		}
+	}
+
+	// 从位置记录中统计行程数据
+	stats, err := s.posRepo.GetDriveStats(ctx, drive.ID)
+	if err == nil && stats != nil {
+		drive.SpeedMax = stats.SpeedMax
+		drive.PowerMax = stats.PowerMax
+		drive.PowerMin = stats.PowerMin
+		drive.InsideTempAvg = stats.InsideTempAvg
+		drive.OutsideTempAvg = stats.OutsideTempAvg
+		drive.EnergyUsedKwh = stats.EnergyUsedKwh
+		drive.EnergyRegenKwh = stats.EnergyRegenKwh
+	}
+
 	if err := s.driveRepo.Complete(ctx, drive); err != nil {
 		s.logger.Error("Failed to complete drive", zap.Error(err))
 	} else {
-		s.logger.Info("Completed drive", zap.Int64("drive_id", drive.ID), zap.Float64("duration_min", drive.DurationMin))
+		// 构建日志字段
+		logFields := []zap.Field{
+			zap.Int64("drive_id", drive.ID),
+			zap.Float64("duration_min", drive.DurationMin),
+			zap.Float64("distance_km", drive.DistanceKm),
+			zap.Intp("speed_max", drive.SpeedMax),
+			zap.Float64p("energy_regen_kwh", drive.EnergyRegenKwh),
+		}
+		if drive.StartAddress != nil {
+			logFields = append(logFields, zap.String("start_address", drive.StartAddress.FormattedAddress))
+		}
+		if drive.EndAddress != nil {
+			logFields = append(logFields, zap.String("end_address", drive.EndAddress.FormattedAddress))
+		}
+		s.logger.Info("Completed drive", logFields...)
 	}
 }
 
@@ -826,6 +983,260 @@ func (s *VehicleService) endCharging(ctx context.Context, car *models.Car, data 
 		s.logger.Error("Failed to complete charging process", zap.Error(err))
 	} else {
 		s.logger.Info("Completed charging", zap.Int64("charging_process_id", cp.ID), zap.Float64("energy_added", cp.ChargeEnergyAdded))
+	}
+}
+
+// startParking 开始停车记录
+func (s *VehicleService) startParking(ctx context.Context, car *models.Car, data *tesla.VehicleData) {
+	parking := &models.Parking{
+		CarID:     car.ID,
+		StartTime: time.Now(),
+	}
+
+	// 位置
+	if data.DriveState != nil {
+		parking.Latitude = data.DriveState.Latitude
+		parking.Longitude = data.DriveState.Longitude
+	}
+
+	// 电量
+	if data.ChargeState != nil {
+		parking.StartBatteryLevel = data.ChargeState.BatteryLevel
+		parking.StartRangeKm = tesla.MilesToKm(data.ChargeState.EstBatteryRange)
+	}
+
+	// 里程表
+	if data.VehicleState != nil {
+		parking.StartOdometer = tesla.MilesToKm(data.VehicleState.Odometer)
+		parking.StartLocked = data.VehicleState.Locked
+		parking.StartSentryMode = data.VehicleState.SentryMode
+		parking.StartIsUserPresent = data.VehicleState.IsUserPresent
+		// 门状态
+		parking.StartDoorsOpen = data.VehicleState.DriverDoorOpen != 0 ||
+			data.VehicleState.PassengerDoorOpen != 0 ||
+			data.VehicleState.DriverRearDoorOpen != 0 ||
+			data.VehicleState.PassengerRearDoorOpen != 0
+		// 窗户状态
+		parking.StartWindowsOpen = data.VehicleState.DriverWindowOpen != 0 ||
+			data.VehicleState.PassengerWindowOpen != 0 ||
+			data.VehicleState.DriverRearWindowOpen != 0 ||
+			data.VehicleState.PassengerRearWindowOpen != 0
+		parking.StartFrunkOpen = data.VehicleState.FrunkOpen != 0
+		parking.StartTrunkOpen = data.VehicleState.TrunkOpen != 0
+		// 胎压
+		parking.StartTpmsPressureFL = data.VehicleState.TpmsPressureFL
+		parking.StartTpmsPressureFR = data.VehicleState.TpmsPressureFR
+		parking.StartTpmsPressureRL = data.VehicleState.TpmsPressureRL
+		parking.StartTpmsPressureRR = data.VehicleState.TpmsPressureRR
+		// 软件版本
+		parking.CarVersion = data.VehicleState.CarVersion
+	}
+
+	// 温度
+	if data.ClimateState != nil {
+		temp := data.ClimateState.InsideTemp
+		parking.StartInsideTemp = &temp
+		outTemp := data.ClimateState.OutsideTemp
+		parking.StartOutsideTemp = &outTemp
+		parking.StartIsClimateOn = data.ClimateState.IsClimateOn
+	}
+
+	if err := s.parkingRepo.Create(ctx, parking); err != nil {
+		s.logger.Error("Failed to create parking", zap.Error(err))
+	} else {
+		s.logger.Info("Started parking", zap.Int64("parking_id", parking.ID))
+	}
+
+	// 初始化停车期间的累计数据
+	s.mu.Lock()
+	s.parkingClimateUsage[car.ID] = 0
+	s.parkingSentryUsage[car.ID] = 0
+	s.parkingLastCheck[car.ID] = time.Now()
+	s.parkingTempSamples[car.ID] = []tempSample{}
+	// 记录初始温度采样
+	if data.ClimateState != nil {
+		temp := data.ClimateState.InsideTemp
+		outTemp := data.ClimateState.OutsideTemp
+		s.parkingTempSamples[car.ID] = append(s.parkingTempSamples[car.ID], tempSample{
+			insideTemp:  &temp,
+			outsideTemp: &outTemp,
+		})
+	}
+	s.mu.Unlock()
+}
+
+// endParking 结束停车记录
+func (s *VehicleService) endParking(ctx context.Context, car *models.Car, data *tesla.VehicleData) {
+	parking, err := s.parkingRepo.GetActiveParking(ctx, car.ID)
+	if err != nil {
+		s.logger.Debug("No active parking to end", zap.Int64("car_id", car.ID))
+		return
+	}
+
+	now := time.Now()
+	parking.EndTime = &now
+	parking.DurationMin = now.Sub(parking.StartTime).Minutes()
+
+	// 电量变化
+	if data.ChargeState != nil {
+		level := data.ChargeState.BatteryLevel
+		parking.EndBatteryLevel = &level
+		rangeKm := tesla.MilesToKm(data.ChargeState.EstBatteryRange)
+		parking.EndRangeKm = &rangeKm
+
+		// 计算吸血鬼功耗 (vampire drain)
+		// 假设每 % 电量约等于总电池容量的 1%
+		// 对于 Model 3 约 60-82 kWh，这里用一个近似值
+		if parking.EndBatteryLevel != nil && parking.StartBatteryLevel > *parking.EndBatteryLevel {
+			// 简单估算：假设电池容量约 75 kWh
+			batteryCapacityKwh := 75.0
+			energyUsed := float64(parking.StartBatteryLevel-*parking.EndBatteryLevel) / 100.0 * batteryCapacityKwh
+			parking.EnergyUsedKwh = &energyUsed
+		}
+	}
+
+	// 里程表
+	if data.VehicleState != nil {
+		endOdometer := tesla.MilesToKm(data.VehicleState.Odometer)
+		parking.EndOdometer = &endOdometer
+		locked := data.VehicleState.Locked
+		parking.EndLocked = &locked
+		sentry := data.VehicleState.SentryMode
+		parking.EndSentryMode = &sentry
+		userPresent := data.VehicleState.IsUserPresent
+		parking.EndIsUserPresent = &userPresent
+		// 门状态
+		doorsOpen := data.VehicleState.DriverDoorOpen != 0 ||
+			data.VehicleState.PassengerDoorOpen != 0 ||
+			data.VehicleState.DriverRearDoorOpen != 0 ||
+			data.VehicleState.PassengerRearDoorOpen != 0
+		parking.EndDoorsOpen = &doorsOpen
+		// 窗户状态
+		windowsOpen := data.VehicleState.DriverWindowOpen != 0 ||
+			data.VehicleState.PassengerWindowOpen != 0 ||
+			data.VehicleState.DriverRearWindowOpen != 0 ||
+			data.VehicleState.PassengerRearWindowOpen != 0
+		parking.EndWindowsOpen = &windowsOpen
+		frunkOpen := data.VehicleState.FrunkOpen != 0
+		parking.EndFrunkOpen = &frunkOpen
+		trunkOpen := data.VehicleState.TrunkOpen != 0
+		parking.EndTrunkOpen = &trunkOpen
+		// 胎压
+		parking.EndTpmsPressureFL = data.VehicleState.TpmsPressureFL
+		parking.EndTpmsPressureFR = data.VehicleState.TpmsPressureFR
+		parking.EndTpmsPressureRL = data.VehicleState.TpmsPressureRL
+		parking.EndTpmsPressureRR = data.VehicleState.TpmsPressureRR
+	}
+
+	// 温度
+	if data.ClimateState != nil {
+		temp := data.ClimateState.InsideTemp
+		parking.EndInsideTemp = &temp
+		outTemp := data.ClimateState.OutsideTemp
+		parking.EndOutsideTemp = &outTemp
+		climateOn := data.ClimateState.IsClimateOn
+		parking.EndIsClimateOn = &climateOn
+	}
+
+	// 计算平均温度
+	s.mu.RLock()
+	samples := s.parkingTempSamples[car.ID]
+	climateUsage := s.parkingClimateUsage[car.ID]
+	sentryUsage := s.parkingSentryUsage[car.ID]
+	s.mu.RUnlock()
+
+	if len(samples) > 0 {
+		var insideSum, outsideSum float64
+		var insideCount, outsideCount int
+		for _, sample := range samples {
+			if sample.insideTemp != nil {
+				insideSum += *sample.insideTemp
+				insideCount++
+			}
+			if sample.outsideTemp != nil {
+				outsideSum += *sample.outsideTemp
+				outsideCount++
+			}
+		}
+		if insideCount > 0 {
+			avg := insideSum / float64(insideCount)
+			parking.InsideTempAvg = &avg
+		}
+		if outsideCount > 0 {
+			avg := outsideSum / float64(outsideCount)
+			parking.OutsideTempAvg = &avg
+		}
+	}
+
+	// 空调和哨兵模式使用时长
+	if climateUsage > 0 {
+		minutes := climateUsage.Minutes()
+		parking.ClimateUsedMin = &minutes
+	}
+	if sentryUsage > 0 {
+		minutes := sentryUsage.Minutes()
+		parking.SentryModeUsedMin = &minutes
+	}
+
+	if err := s.parkingRepo.Complete(ctx, parking); err != nil {
+		s.logger.Error("Failed to complete parking", zap.Error(err))
+	} else {
+		s.logger.Info("Completed parking",
+			zap.Int64("parking_id", parking.ID),
+			zap.Float64("duration_min", parking.DurationMin),
+			zap.Float64p("energy_used_kwh", parking.EnergyUsedKwh))
+	}
+
+	// 清理累计数据
+	s.mu.Lock()
+	delete(s.parkingClimateUsage, car.ID)
+	delete(s.parkingSentryUsage, car.ID)
+	delete(s.parkingLastCheck, car.ID)
+	delete(s.parkingTempSamples, car.ID)
+	s.mu.Unlock()
+}
+
+// updateParkingStats 更新停车期间的统计数据
+// 每次轮询时调用，累计空调/哨兵模式使用时间，记录温度采样
+func (s *VehicleService) updateParkingStats(ctx context.Context, car *models.Car, data *tesla.VehicleData) {
+	// 检查是否有活动的停车记录
+	_, err := s.parkingRepo.GetActiveParking(ctx, car.ID)
+	if err != nil {
+		return // 没有活动的停车记录
+	}
+
+	now := time.Now()
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	lastCheck, exists := s.parkingLastCheck[car.ID]
+	if !exists {
+		s.parkingLastCheck[car.ID] = now
+		return
+	}
+
+	interval := now.Sub(lastCheck)
+	s.parkingLastCheck[car.ID] = now
+
+	// 累计空调使用时长
+	if data.ClimateState != nil && data.ClimateState.IsClimateOn {
+		s.parkingClimateUsage[car.ID] += interval
+	}
+
+	// 累计哨兵模式使用时长
+	if data.VehicleState != nil && data.VehicleState.SentryMode {
+		s.parkingSentryUsage[car.ID] += interval
+	}
+
+	// 记录温度采样
+	if data.ClimateState != nil {
+		temp := data.ClimateState.InsideTemp
+		outTemp := data.ClimateState.OutsideTemp
+		s.parkingTempSamples[car.ID] = append(s.parkingTempSamples[car.ID], tempSample{
+			insideTemp:  &temp,
+			outsideTemp: &outTemp,
+		})
 	}
 }
 

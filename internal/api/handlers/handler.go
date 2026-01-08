@@ -20,6 +20,7 @@ type Handler struct {
 	driveRepo      *repository.DriveRepository
 	chargeRepo     *repository.ChargeRepository
 	posRepo        *repository.PositionRepository
+	parkingRepo    *repository.ParkingRepository
 	vehicleService *service.VehicleService
 	wsHub          *ws.Hub
 	upgrader       websocket.Upgrader
@@ -32,6 +33,7 @@ func NewHandler(
 	driveRepo *repository.DriveRepository,
 	chargeRepo *repository.ChargeRepository,
 	posRepo *repository.PositionRepository,
+	parkingRepo *repository.ParkingRepository,
 	vehicleService *service.VehicleService,
 	wsHub *ws.Hub,
 ) *Handler {
@@ -41,6 +43,7 @@ func NewHandler(
 		driveRepo:      driveRepo,
 		chargeRepo:     chargeRepo,
 		posRepo:        posRepo,
+		parkingRepo:    parkingRepo,
 		vehicleService: vehicleService,
 		wsHub:          wsHub,
 		upgrader: websocket.Upgrader{
@@ -72,6 +75,10 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 		api.GET("/cars/:id/charges", h.ListCharges)
 		api.GET("/charges/:id", h.GetCharge)
 		api.GET("/charges/:id/details", h.GetChargeDetails)
+
+		// 停车
+		api.GET("/cars/:id/parkings", h.ListParkings)
+		api.GET("/parkings/:id", h.GetParking)
 
 		// 统计
 		api.GET("/cars/:id/stats", h.GetCarStats)
@@ -320,6 +327,61 @@ func (h *Handler) GetChargeDetails(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"data": charges})
+}
+
+// ListParkings 获取停车列表
+func (h *Handler) ListParkings(c *gin.Context) {
+	carID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid car ID"})
+		return
+	}
+
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	perPage, _ := strconv.Atoi(c.DefaultQuery("per_page", "20"))
+	if page < 1 {
+		page = 1
+	}
+	if perPage < 1 || perPage > 100 {
+		perPage = 20
+	}
+
+	offset := (page - 1) * perPage
+
+	parkings, err := h.parkingRepo.ListByCarID(c.Request.Context(), carID, perPage, offset)
+	if err != nil {
+		h.logger.Error("Failed to list parkings", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list parkings"})
+		return
+	}
+
+	total, _ := h.parkingRepo.CountByCarID(c.Request.Context(), carID)
+
+	c.JSON(http.StatusOK, gin.H{
+		"data": parkings,
+		"pagination": gin.H{
+			"page":     page,
+			"per_page": perPage,
+			"total":    total,
+		},
+	})
+}
+
+// GetParking 获取停车详情
+func (h *Handler) GetParking(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid parking ID"})
+		return
+	}
+
+	parking, err := h.parkingRepo.GetByID(c.Request.Context(), id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Parking not found"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"data": parking})
 }
 
 // GetCarStats 获取车辆统计

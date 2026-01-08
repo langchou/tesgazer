@@ -43,6 +43,9 @@ type Config struct {
 	StreamingHost           string        // Streaming WebSocket 地址
 	StreamingReconnectDelay time.Duration // 重连延迟
 
+	// 高德地图 API 配置 (用于逆地理编码)
+	AmapAPIKey string // 高德 Web 服务 API Key
+
 	// Token 存储路径
 	TokenFile string
 }
@@ -72,6 +75,7 @@ func Load() (*Config, error) {
 		UseStreamingAPI:         getEnvBool("USE_STREAMING_API", true), // 默认启用
 		StreamingHost:           getEnv("STREAMING_HOST", "wss://streaming.vn.cloud.tesla.cn/streaming/"), // 中国区域名
 		StreamingReconnectDelay: getEnvDuration("STREAMING_RECONNECT_DELAY", 5*time.Second),
+		AmapAPIKey:              getEnv("AMAP_API_KEY", ""), // 高德地图 API Key
 		TokenFile:               getEnv("TOKEN_FILE", "tokens.json"),
 	}
 
