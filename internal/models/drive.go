@@ -60,3 +60,12 @@ type Position struct {
 	TpmsPressureRR *float64  `json:"tpms_pressure_rr,omitempty" db:"tpms_pressure_rr"` // 右后
 	RecordedAt     time.Time `json:"recorded_at" db:"recorded_at"`
 }
+
+// DrivePath 行程轨迹简要信息 (用于足迹地图)
+type DrivePath struct {
+	ID          int64        `json:"id"`
+	StartTime   time.Time    `json:"start_time"`
+	DurationMin float64      `json:"duration_min"`
+	DistanceKm  float64      `json:"distance_km"`
+	Path        [][2]float64 `json:"path"` // [lat, lng]
+}

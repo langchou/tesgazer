@@ -70,6 +70,7 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 		api.GET("/cars/:id/drives", h.ListDrives)
 		api.GET("/drives/:id", h.GetDrive)
 		api.GET("/drives/:id/positions", h.GetDrivePositions)
+		api.GET("/cars/:id/footprint", h.GetFootprint)
 
 		// 充电
 		api.GET("/cars/:id/charges", h.ListCharges)

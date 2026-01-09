@@ -21,7 +21,7 @@ func (s *VehicleService) createPosition(carID int64, data *tesla.VehicleData) *m
 		pos.Latitude = data.DriveState.Latitude
 		pos.Longitude = data.DriveState.Longitude
 		pos.Heading = data.DriveState.Heading
-		pos.Speed = data.DriveState.Speed
+		pos.Speed = tesla.MphToKmhPtr(data.DriveState.Speed) // mph -> km/h
 		pos.Power = data.DriveState.Power
 	}
 

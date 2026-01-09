@@ -185,7 +185,7 @@ func (s *VehicleService) handleStreamData(vehicleID int64, data *tesla.StreamDat
 			vs.Longitude = data.EstLng
 		}
 		if data.Speed > 0 {
-			speed := data.Speed
+			speed := tesla.MphToKmh(data.Speed) // mph -> km/h
 			vs.Speed = &speed
 		}
 		vs.Power = data.Power
@@ -208,13 +208,14 @@ func (s *VehicleService) handleStreamData(vehicleID int64, data *tesla.StreamDat
 			}
 
 			// 构造位置数据
+			speedKmh := tesla.MphToKmh(data.Speed) // mph -> km/h
 			pos := &models.Position{
 				CarID:      carID,
 				DriveID:    &activeDrive.ID,
 				Latitude:   data.EstLat,
 				Longitude:  data.EstLng,
 				Heading:    data.Heading,
-				Speed:      &data.Speed,
+				Speed:      &speedKmh,
 				Power:      data.Power,
 				RecordedAt: time.Now(),
 			}

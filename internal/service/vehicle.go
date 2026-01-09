@@ -653,7 +653,7 @@ func (s *VehicleService) updateMachineFromData(machine *state.Machine, data *tes
 		if data.DriveState != nil {
 			vs.Latitude = data.DriveState.Latitude
 			vs.Longitude = data.DriveState.Longitude
-			vs.Speed = data.DriveState.Speed
+			vs.Speed = tesla.MphToKmhPtr(data.DriveState.Speed) // mph -> km/h
 			vs.Power = data.DriveState.Power
 			// 新增航向角
 			vs.Heading = data.DriveState.Heading

@@ -175,6 +175,20 @@ func KmToMiles(km float64) float64 {
 	return km / 1.60934
 }
 
+// MphToKmh 英里/小时转公里/小时 (用于速度转换)
+func MphToKmh(mph int) int {
+	return int(float64(mph) * 1.60934)
+}
+
+// MphToKmhPtr 英里/小时转公里/小时 (指针版本)
+func MphToKmhPtr(mph *int) *int {
+	if mph == nil {
+		return nil
+	}
+	kmh := MphToKmh(*mph)
+	return &kmh
+}
+
 // ParseTimestamp 解析 Tesla API 时间戳 (毫秒)
 func ParseTimestamp(ts int64) time.Time {
 	return time.UnixMilli(ts)
