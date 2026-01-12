@@ -80,6 +80,7 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 		// 停车
 		api.GET("/cars/:id/parkings", h.ListParkings)
 		api.GET("/parkings/:id", h.GetParking)
+		api.GET("/parkings/:id/events", h.GetParkingEvents)
 	}
 
 	// WebSocket

@@ -428,6 +428,17 @@ func (r *ParkingRepository) GetActiveParking(ctx context.Context, carID int64) (
 	return parking, nil
 }
 
+// ForceCloseOpenParkings 强制关闭指定车辆的所有未结束停车记录
+func (r *ParkingRepository) ForceCloseOpenParkings(ctx context.Context, carID int64, endTime time.Time) error {
+	query := `
+		UPDATE parkings 
+		SET end_time = $1, duration_min = EXTRACT(EPOCH FROM ($1 - start_time))/60
+		WHERE car_id = $2 AND end_time IS NULL
+	`
+	_, err := r.db.Pool.Exec(ctx, query, endTime, carID)
+	return err
+}
+
 // GetStats 获取停车统计
 func (r *ParkingRepository) GetStats(ctx context.Context, carID int64, since time.Time) (totalDuration float64, totalEnergyUsed float64, count int64, err error) {
 	query := `
@@ -439,4 +450,65 @@ func (r *ParkingRepository) GetStats(ctx context.Context, carID int64, since tim
 		err = fmt.Errorf("get parking stats: %w", err)
 	}
 	return
+}
+
+// CreateEvent 创建停车事件
+func (r *ParkingRepository) CreateEvent(ctx context.Context, event *models.ParkingEvent) error {
+	query := `
+		INSERT INTO parking_events (parking_id, event_type, event_time, details)
+		VALUES ($1, $2, $3, $4)
+		RETURNING id
+	`
+	err := r.db.Pool.QueryRow(ctx, query,
+		event.ParkingID,
+		event.EventType,
+		event.EventTime,
+		event.Details,
+	).Scan(&event.ID)
+	if err != nil {
+		return fmt.Errorf("create parking event: %w", err)
+	}
+	return nil
+}
+
+// ListEventsByParkingID 获取停车事件列表
+func (r *ParkingRepository) ListEventsByParkingID(ctx context.Context, parkingID int64) ([]*models.ParkingEvent, error) {
+	query := `
+		SELECT id, parking_id, event_type, event_time, details
+		FROM parking_events
+		WHERE parking_id = $1
+		ORDER BY event_time ASC
+	`
+	rows, err := r.db.Pool.Query(ctx, query, parkingID)
+	if err != nil {
+		return nil, fmt.Errorf("list parking events: %w", err)
+	}
+	defer rows.Close()
+
+	var events []*models.ParkingEvent
+	for rows.Next() {
+		event := &models.ParkingEvent{}
+		err := rows.Scan(
+			&event.ID,
+			&event.ParkingID,
+			&event.EventType,
+			&event.EventTime,
+			&event.Details,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("scan parking event: %w", err)
+		}
+		events = append(events, event)
+	}
+
+	return events, nil
+}
+
+// DeleteEventsByParkingID 删除停车事件（用于停车记录删除时级联删除）
+func (r *ParkingRepository) DeleteEventsByParkingID(ctx context.Context, parkingID int64) error {
+	_, err := r.db.Pool.Exec(ctx, `DELETE FROM parking_events WHERE parking_id = $1`, parkingID)
+	if err != nil {
+		return fmt.Errorf("delete parking events: %w", err)
+	}
+	return nil
 }

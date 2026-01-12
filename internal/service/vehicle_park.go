@@ -12,6 +12,11 @@ import (
 
 // startParking 开始停车记录
 func (s *VehicleService) startParking(ctx context.Context, car *models.Car, data *tesla.VehicleData) {
+	// 强制结束任何尚未结束的停车记录 (避免出现多个 active parking)
+	if err := s.parkingRepo.ForceCloseOpenParkings(ctx, car.ID, time.Now()); err != nil {
+		s.logger.Warn("Failed to force close previous parkings", zap.Error(err), zap.Int64("car_id", car.ID))
+	}
+
 	parking := &models.Parking{
 		CarID:     car.ID,
 		StartTime: time.Now(),
@@ -21,6 +26,16 @@ func (s *VehicleService) startParking(ctx context.Context, car *models.Car, data
 	if data.DriveState != nil {
 		parking.Latitude = data.DriveState.Latitude
 		parking.Longitude = data.DriveState.Longitude
+
+		// 逆地理编码：获取停车位置的地址
+		if s.geocoder.IsConfigured() {
+			addr, err := s.geocoder.ReverseGeocode(ctx, data.DriveState.Latitude, data.DriveState.Longitude)
+			if err != nil {
+				s.logger.Warn("Failed to reverse geocode parking location", zap.Error(err))
+			} else {
+				parking.Address = addr
+			}
+		}
 	}
 
 	// 电量
@@ -77,6 +92,8 @@ func (s *VehicleService) startParking(ctx context.Context, car *models.Car, data
 	s.parkingSentryUsage[car.ID] = 0
 	s.parkingLastCheck[car.ID] = time.Now()
 	s.parkingTempSamples[car.ID] = []tempSample{}
+	// 初始化事件检测的上一次状态
+	s.parkingPrevStates[car.ID] = s.extractParkingState(data)
 	// 记录初始温度采样
 	if data.ClimateState != nil {
 		temp := data.ClimateState.InsideTemp
@@ -217,6 +234,7 @@ func (s *VehicleService) endParking(ctx context.Context, car *models.Car, data *
 	delete(s.parkingSentryUsage, car.ID)
 	delete(s.parkingLastCheck, car.ID)
 	delete(s.parkingTempSamples, car.ID)
+	delete(s.parkingPrevStates, car.ID)
 	s.mu.Unlock()
 }
 
@@ -224,10 +242,13 @@ func (s *VehicleService) endParking(ctx context.Context, car *models.Car, data *
 // 每次轮询时调用，累计空调/哨兵模式使用时间，记录温度采样
 func (s *VehicleService) updateParkingStats(ctx context.Context, car *models.Car, data *tesla.VehicleData) {
 	// 检查是否有活动的停车记录
-	_, err := s.parkingRepo.GetActiveParking(ctx, car.ID)
+	parking, err := s.parkingRepo.GetActiveParking(ctx, car.ID)
 	if err != nil {
 		return // 没有活动的停车记录
 	}
+
+	// 检测并记录状态变化事件（在锁外执行，因为需要数据库操作）
+	s.detectAndRecordEvents(ctx, car.ID, parking.ID, data)
 
 	now := time.Now()
 
@@ -327,5 +348,134 @@ func (s *VehicleService) updateActiveParkingSnapshot(ctx context.Context, car *m
 	// 4. 保存到数据库
 	if err := s.parkingRepo.UpdateSnapshot(ctx, parking); err != nil {
 		s.logger.Warn("Failed to update active parking snapshot", zap.Error(err))
+	}
+}
+
+// extractParkingState 从 API 数据提取状态（用于事件检测）
+func (s *VehicleService) extractParkingState(data *tesla.VehicleData) *parkingPrevState {
+	state := &parkingPrevState{}
+
+	if data.VehicleState != nil {
+		state.DoorsOpen = data.VehicleState.DriverDoorOpen != 0 ||
+			data.VehicleState.PassengerDoorOpen != 0 ||
+			data.VehicleState.DriverRearDoorOpen != 0 ||
+			data.VehicleState.PassengerRearDoorOpen != 0
+		state.WindowsOpen = data.VehicleState.DriverWindowOpen != 0 ||
+			data.VehicleState.PassengerWindowOpen != 0 ||
+			data.VehicleState.DriverRearWindowOpen != 0 ||
+			data.VehicleState.PassengerRearWindowOpen != 0
+		state.TrunkOpen = data.VehicleState.TrunkOpen != 0
+		state.FrunkOpen = data.VehicleState.FrunkOpen != 0
+		state.Locked = data.VehicleState.Locked
+		state.SentryMode = data.VehicleState.SentryMode
+		state.IsUserPresent = data.VehicleState.IsUserPresent
+	}
+
+	if data.ClimateState != nil {
+		state.IsClimateOn = data.ClimateState.IsClimateOn
+	}
+
+	return state
+}
+
+// detectAndRecordEvents 检测状态变化并记录事件
+func (s *VehicleService) detectAndRecordEvents(ctx context.Context, carID int64, parkingID int64, data *tesla.VehicleData) {
+	// 获取上一次状态
+	s.mu.RLock()
+	prev := s.parkingPrevStates[carID]
+	s.mu.RUnlock()
+
+	if prev == nil {
+		// 首次检测，只初始化状态不记录事件
+		s.mu.Lock()
+		s.parkingPrevStates[carID] = s.extractParkingState(data)
+		s.mu.Unlock()
+		return
+	}
+
+	// 提取当前状态
+	curr := s.extractParkingState(data)
+	now := time.Now()
+
+	// 检测每个状态变化并记录事件
+	// 车门
+	if !prev.DoorsOpen && curr.DoorsOpen {
+		s.recordParkingEvent(ctx, parkingID, models.EventDoorsOpened, now)
+	} else if prev.DoorsOpen && !curr.DoorsOpen {
+		s.recordParkingEvent(ctx, parkingID, models.EventDoorsClosed, now)
+	}
+
+	// 车窗
+	if !prev.WindowsOpen && curr.WindowsOpen {
+		s.recordParkingEvent(ctx, parkingID, models.EventWindowsOpened, now)
+	} else if prev.WindowsOpen && !curr.WindowsOpen {
+		s.recordParkingEvent(ctx, parkingID, models.EventWindowsClosed, now)
+	}
+
+	// 后备箱
+	if !prev.TrunkOpen && curr.TrunkOpen {
+		s.recordParkingEvent(ctx, parkingID, models.EventTrunkOpened, now)
+	} else if prev.TrunkOpen && !curr.TrunkOpen {
+		s.recordParkingEvent(ctx, parkingID, models.EventTrunkClosed, now)
+	}
+
+	// 前备箱
+	if !prev.FrunkOpen && curr.FrunkOpen {
+		s.recordParkingEvent(ctx, parkingID, models.EventFrunkOpened, now)
+	} else if prev.FrunkOpen && !curr.FrunkOpen {
+		s.recordParkingEvent(ctx, parkingID, models.EventFrunkClosed, now)
+	}
+
+	// 锁车状态
+	if prev.Locked && !curr.Locked {
+		s.recordParkingEvent(ctx, parkingID, models.EventUnlocked, now)
+	} else if !prev.Locked && curr.Locked {
+		s.recordParkingEvent(ctx, parkingID, models.EventLocked, now)
+	}
+
+	// 哨兵模式
+	if !prev.SentryMode && curr.SentryMode {
+		s.recordParkingEvent(ctx, parkingID, models.EventSentryEnabled, now)
+	} else if prev.SentryMode && !curr.SentryMode {
+		s.recordParkingEvent(ctx, parkingID, models.EventSentryDisabled, now)
+	}
+
+	// 空调
+	if !prev.IsClimateOn && curr.IsClimateOn {
+		s.recordParkingEvent(ctx, parkingID, models.EventClimateOn, now)
+	} else if prev.IsClimateOn && !curr.IsClimateOn {
+		s.recordParkingEvent(ctx, parkingID, models.EventClimateOff, now)
+	}
+
+	// 用户在车内
+	if !prev.IsUserPresent && curr.IsUserPresent {
+		s.recordParkingEvent(ctx, parkingID, models.EventUserPresent, now)
+	} else if prev.IsUserPresent && !curr.IsUserPresent {
+		s.recordParkingEvent(ctx, parkingID, models.EventUserLeft, now)
+	}
+
+	// 更新上一次状态
+	s.mu.Lock()
+	s.parkingPrevStates[carID] = curr
+	s.mu.Unlock()
+}
+
+// recordParkingEvent 记录停车事件
+func (s *VehicleService) recordParkingEvent(ctx context.Context, parkingID int64, eventType models.ParkingEventType, eventTime time.Time) {
+	event := &models.ParkingEvent{
+		ParkingID: parkingID,
+		EventType: eventType,
+		EventTime: eventTime,
+	}
+
+	if err := s.parkingRepo.CreateEvent(ctx, event); err != nil {
+		s.logger.Error("Failed to record parking event",
+			zap.Error(err),
+			zap.Int64("parking_id", parkingID),
+			zap.String("event_type", string(eventType)))
+	} else {
+		s.logger.Info("Recorded parking event",
+			zap.Int64("parking_id", parkingID),
+			zap.String("event_type", string(eventType)))
 	}
 }

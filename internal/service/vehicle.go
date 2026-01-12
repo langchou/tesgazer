@@ -8,7 +8,7 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/langchou/tesgazer/internal/api/amap"
+	"github.com/langchou/tesgazer/internal/api/geocoder"
 	"github.com/langchou/tesgazer/internal/api/tesla"
 	"github.com/langchou/tesgazer/internal/config"
 	"github.com/langchou/tesgazer/internal/models"
@@ -22,7 +22,7 @@ type VehicleService struct {
 	cfg          *config.Config
 	logger       *zap.Logger
 	teslaClient  *tesla.Client
-	geocoder     *amap.GeocoderClient // 高德逆地理编码客户端
+	geocoder     *geocoder.Client // 逆地理编码客户端（支持高德/Nominatim）
 	carRepo      *repository.CarRepository
 	posRepo      *repository.PositionRepository
 	driveRepo    *repository.DriveRepository
@@ -47,6 +47,7 @@ type VehicleService struct {
 	parkingSentryUsage  map[int64]time.Duration // 哨兵模式使用时长累计
 	parkingLastCheck    map[int64]time.Time     // 上次检查时间
 	parkingTempSamples  map[int64][]tempSample  // 温度采样
+	parkingPrevStates   map[int64]*parkingPrevState // 上一次状态（用于事件检测）
 
 	// Tesla Streaming API 客户端 (双链路架构)
 	streamingClients map[int64]*tesla.StreamingClient // 每辆车的 Streaming 客户端
@@ -58,6 +59,18 @@ type VehicleService struct {
 type tempSample struct {
 	insideTemp  *float64
 	outsideTemp *float64
+}
+
+// parkingPrevState 停车期间上一次轮询的状态（用于事件检测）
+type parkingPrevState struct {
+	DoorsOpen     bool
+	WindowsOpen   bool
+	TrunkOpen     bool
+	FrunkOpen     bool
+	Locked        bool
+	SentryMode    bool
+	IsClimateOn   bool
+	IsUserPresent bool
 }
 
 // NewVehicleService 创建车辆服务
@@ -72,19 +85,15 @@ func NewVehicleService(
 	parkingRepo *repository.ParkingRepository,
 	wsHub *ws.Hub,
 ) *VehicleService {
-	// 创建高德逆地理编码客户端
-	geocoder := amap.NewGeocoderClient(cfg.AmapAPIKey, logger)
-	if geocoder.IsConfigured() {
-		logger.Info("Amap geocoder initialized")
-	} else {
-		logger.Warn("Amap API key not configured, address geocoding will be disabled")
-	}
+	// 创建逆地理编码客户端（支持高德/Nominatim）
+	geo := geocoder.NewClient(cfg.AmapAPIKey, logger)
+	logger.Info("Geocoder initialized", zap.String("provider", geo.GetProvider()))
 
 	svc := &VehicleService{
 		cfg:                 cfg,
 		logger:              logger,
 		teslaClient:         teslaClient,
-		geocoder:            geocoder,
+		geocoder:            geo,
 		carRepo:             carRepo,
 		posRepo:             posRepo,
 		driveRepo:           driveRepo,
@@ -99,6 +108,7 @@ func NewVehicleService(
 		parkingSentryUsage:  make(map[int64]time.Duration),
 		parkingLastCheck:    make(map[int64]time.Time),
 		parkingTempSamples:  make(map[int64][]tempSample),
+		parkingPrevStates:   make(map[int64]*parkingPrevState),
 		streamingClients:    make(map[int64]*tesla.StreamingClient),
 	}
 

@@ -62,3 +62,29 @@ func (h *Handler) GetParking(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"data": parking})
 }
+
+// GetParkingEvents 获取停车事件列表
+// GET /api/parkings/:id/events
+func (h *Handler) GetParkingEvents(c *gin.Context) {
+	parkingID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid parking ID"})
+		return
+	}
+
+	// 先检查停车记录是否存在
+	_, err = h.parkingRepo.GetByID(c.Request.Context(), parkingID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Parking not found"})
+		return
+	}
+
+	events, err := h.parkingRepo.ListEventsByParkingID(c.Request.Context(), parkingID)
+	if err != nil {
+		h.logger.Error("Failed to list parking events", zap.Error(err), zap.Int64("parking_id", parkingID))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list parking events"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"data": events})
+}

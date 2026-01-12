@@ -32,6 +32,7 @@
 | GET | `/api/cars/:id/drives` | 获取行程列表（分页） |
 | GET | `/api/drives/:id` | 获取行程详情 |
 | GET | `/api/drives/:id/positions` | 获取行程轨迹点 |
+| GET | `/api/cars/:id/footprint` | 获取足迹数据（默认90天） |
 
 ### 充电相关
 
@@ -271,6 +272,48 @@
 }
 ```
 
+### GET /api/cars/:id/footprint
+
+获取车辆足迹数据（所有行程的起止点）。
+
+**查询参数**:
+| 参数 | 类型 | 默认值 | 描述 |
+|------|------|--------|------|
+| days | int | 90 | 查询最近多少天的数据 |
+
+**响应示例**:
+```json
+{
+  "data": [
+    {
+      "drive_id": 1,
+      "start_time": "2024-01-07T10:00:00Z",
+      "end_time": "2024-01-07T10:30:00Z",
+      "start_lat": 31.2304,
+      "start_lng": 121.4737,
+      "end_lat": 31.2500,
+      "end_lng": 121.5000,
+      "distance_km": 25.5,
+      "duration_min": 30.5
+    }
+  ]
+}
+```
+
+#### Footprint 字段说明
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `drive_id` | int64 | 行程 ID |
+| `start_time` | string | 开始时间 (ISO8601) |
+| `end_time` | string | 结束时间 (ISO8601) |
+| `start_lat` | float64 | 起点纬度 |
+| `start_lng` | float64 | 起点经度 |
+| `end_lat` | float64 | 终点纬度 |
+| `end_lng` | float64 | 终点经度 |
+| `distance_km` | float64 | 行驶距离 (km) |
+| `duration_min` | float64 | 行程时长 (分钟) |
+
 ### GET /api/cars/:id/parkings
 
 获取停车记录列表（分页）。
@@ -418,7 +461,37 @@ interface WebSocketMessage {
 
 ### 消息类型
 
-#### 1. `state_update` - 车辆状态更新
+#### 1. `init` - 初始化数据
+
+客户端连接时立即推送，包含车辆列表和所有车辆的当前状态。
+
+```json
+{
+  "type": "init",
+  "data": {
+    "cars": [
+      {
+        "id": 1,
+        "tesla_id": 1234567890,
+        "vin": "LRW3E7EK1NC123456",
+        "name": "我的特斯拉",
+        "model": "model3"
+      }
+    ],
+    "states": {
+      "1": {
+        "car_id": 1,
+        "state": "online",
+        "battery_level": 67,
+        "latitude": 31.2304,
+        "longitude": 121.4737
+      }
+    }
+  }
+}
+```
+
+#### 2. `state_update` - 车辆状态更新
 
 当车辆状态发生变化时推送。
 
@@ -810,13 +883,48 @@ interface WebSocketMessage {
 
 ## 配置参数参考
 
+### 基础配置
+
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
-| POLL_INTERVAL_ONLINE | 10s | 在线状态轮询间隔 |
+| PORT | 4000 | 服务端口 |
+| DATABASE_URL | — | PostgreSQL 连接地址 |
+| DEBUG | false | 调试模式 |
+
+### 轮询间隔
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| POLL_INTERVAL_ONLINE | 15s | 在线状态轮询间隔 |
 | POLL_INTERVAL_DRIVING | 3s | 行驶状态轮询间隔 |
-| POLL_INTERVAL_CHARGING | 30s | 充电状态轮询间隔 |
+| POLL_INTERVAL_CHARGING | 5s | 充电状态轮询间隔 |
+| POLL_INTERVAL_ASLEEP | 30s | 睡眠状态轮询间隔 |
+| POLL_BACKOFF_INITIAL | 1s | 初始退避间隔 |
+| POLL_BACKOFF_MAX | 30s | 最大退避间隔 |
+| POLL_BACKOFF_FACTOR | 2.0 | 退避因子 |
+
+### 休眠控制
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
 | SUSPEND_AFTER_IDLE_MIN | 15 | 空闲多久后暂停 (分钟) |
 | SUSPEND_POLL_INTERVAL | 21m | 暂停状态轮询间隔 |
+| REQUIRE_NOT_UNLOCKED | false | 是否要求上锁才能休眠 |
+
+### Streaming API
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| USE_STREAMING_API | true | 是否启用 Streaming API |
+| STREAMING_HOST | wss://streaming.vn.cloud.tesla.cn/streaming/ | Streaming WebSocket 地址 |
+| STREAMING_RECONNECT_DELAY | 5s | 重连延迟 |
+
+### 可选配置
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| AMAP_API_KEY | — | 高德地图 API Key（逆地理编码） |
+| TOKEN_FILE | tokens.json | Token 存储文件 |
 
 ---
 
@@ -843,6 +951,10 @@ interface WebSocketMessage {
 
 ## 更新日志
 
+- **2025-01-09**:
+  - **新增 Footprint API**: `/api/cars/:id/footprint` 获取车辆足迹数据（行程起止点）
+  - **配置参数完善**: 补充所有配置参数文档，包括 Streaming API、退避算法、高德地图等
+  - **修正默认值**: 更正轮询间隔默认值（POLL_INTERVAL_ONLINE: 15s, POLL_INTERVAL_CHARGING: 5s）
 - **2025-01-08**:
   - **Drive API 增强**:
     - 新增 `start_odometer_km` / `end_odometer_km`: 起止里程表读数

@@ -59,13 +59,18 @@ Content-Type: application/json
 | GET | `/api/cars` | 车辆列表 |
 | GET | `/api/cars/:id` | 车辆详情 |
 | GET | `/api/cars/:id/state` | 实时状态 |
+| GET | `/api/cars/:id/stats` | 车辆统计 |
 | GET | `/api/cars/:id/drives` | 行程历史 |
 | GET | `/api/cars/:id/charges` | 充电历史 |
+| GET | `/api/cars/:id/parkings` | 停车历史 |
+| GET | `/api/cars/:id/footprint` | 足迹数据（90天） |
 | POST | `/api/cars/:id/suspend` | 暂停日志（允许休眠） |
 | POST | `/api/cars/:id/resume` | 恢复日志 |
 | GET | `/api/drives/:id` | 行程详情 |
 | GET | `/api/drives/:id/positions` | 行程轨迹 |
 | GET | `/api/charges/:id` | 充电详情 |
+| GET | `/api/charges/:id/details` | 充电曲线数据 |
+| GET | `/api/parkings/:id` | 停车详情 |
 
 ### WebSocket
 
@@ -84,9 +89,42 @@ ws.onmessage = (event) => {
 |------|------|--------|
 | `PORT` | 服务端口 | `4000` |
 | `DATABASE_URL` | PostgreSQL 连接地址 | — |
-| `POLL_INTERVAL_ONLINE` | 在线轮询间隔 | `10s` |
-| `POLL_INTERVAL_ASLEEP` | 睡眠轮询间隔 | `60s` |
-| `POLL_INTERVAL_CHARGING` | 充电轮询间隔 | `30s` |
+| `DEBUG` | 调试模式 | `false` |
+
+### 轮询间隔
+
+| 变量 | 说明 | 默认值 |
+|------|------|--------|
+| `POLL_INTERVAL_ONLINE` | 在线轮询间隔 | `15s` |
+| `POLL_INTERVAL_DRIVING` | 驾驶轮询间隔 | `3s` |
+| `POLL_INTERVAL_CHARGING` | 充电轮询间隔 | `5s` |
+| `POLL_INTERVAL_ASLEEP` | 睡眠轮询间隔 | `30s` |
+| `POLL_BACKOFF_INITIAL` | 初始退避间隔 | `1s` |
+| `POLL_BACKOFF_MAX` | 最大退避间隔 | `30s` |
+| `POLL_BACKOFF_FACTOR` | 退避因子 | `2.0` |
+
+### 休眠控制
+
+| 变量 | 说明 | 默认值 |
+|------|------|--------|
+| `SUSPEND_AFTER_IDLE_MIN` | 空闲多久后暂停（分钟） | `15` |
+| `SUSPEND_POLL_INTERVAL` | 暂停状态轮询间隔 | `21m` |
+| `REQUIRE_NOT_UNLOCKED` | 是否要求上锁才能休眠 | `false` |
+
+### Streaming API
+
+| 变量 | 说明 | 默认值 |
+|------|------|--------|
+| `USE_STREAMING_API` | 启用 Streaming API | `true` |
+| `STREAMING_HOST` | Streaming WebSocket 地址 | `wss://streaming.vn.cloud.tesla.cn/streaming/` |
+| `STREAMING_RECONNECT_DELAY` | 重连延迟 | `5s` |
+
+### 可选配置
+
+| 变量 | 说明 | 默认值 |
+|------|------|--------|
+| `AMAP_API_KEY` | 高德地图 API Key（逆地理编码） | — |
+| `TOKEN_FILE` | Token 存储文件 | `tokens.json` |
 
 ## 许可证
 

@@ -59,13 +59,18 @@ Content-Type: application/json
 | GET | `/api/cars` | List vehicles |
 | GET | `/api/cars/:id` | Vehicle details |
 | GET | `/api/cars/:id/state` | Real-time state |
+| GET | `/api/cars/:id/stats` | Vehicle statistics |
 | GET | `/api/cars/:id/drives` | Drive history |
 | GET | `/api/cars/:id/charges` | Charge history |
+| GET | `/api/cars/:id/parkings` | Parking history |
+| GET | `/api/cars/:id/footprint` | Footprint data (90 days) |
 | POST | `/api/cars/:id/suspend` | Suspend logging (allow sleep) |
 | POST | `/api/cars/:id/resume` | Resume logging |
 | GET | `/api/drives/:id` | Drive details |
 | GET | `/api/drives/:id/positions` | Drive trajectory |
 | GET | `/api/charges/:id` | Charge details |
+| GET | `/api/charges/:id/details` | Charge curve data |
+| GET | `/api/parkings/:id` | Parking details |
 
 ### WebSocket
 
@@ -84,9 +89,42 @@ ws.onmessage = (event) => {
 |----------|-------------|---------|
 | `PORT` | Server port | `4000` |
 | `DATABASE_URL` | PostgreSQL connection | — |
-| `POLL_INTERVAL_ONLINE` | Online polling | `10s` |
-| `POLL_INTERVAL_ASLEEP` | Asleep polling | `60s` |
-| `POLL_INTERVAL_CHARGING` | Charging polling | `30s` |
+| `DEBUG` | Enable debug mode | `false` |
+
+### Polling Intervals
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `POLL_INTERVAL_ONLINE` | Online polling | `15s` |
+| `POLL_INTERVAL_DRIVING` | Driving polling | `3s` |
+| `POLL_INTERVAL_CHARGING` | Charging polling | `5s` |
+| `POLL_INTERVAL_ASLEEP` | Asleep polling | `30s` |
+| `POLL_BACKOFF_INITIAL` | Initial backoff | `1s` |
+| `POLL_BACKOFF_MAX` | Max backoff | `30s` |
+| `POLL_BACKOFF_FACTOR` | Backoff factor | `2.0` |
+
+### Sleep/Suspend
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `SUSPEND_AFTER_IDLE_MIN` | Idle minutes before suspend | `15` |
+| `SUSPEND_POLL_INTERVAL` | Suspend polling interval | `21m` |
+| `REQUIRE_NOT_UNLOCKED` | Require locked to sleep | `false` |
+
+### Streaming API
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `USE_STREAMING_API` | Enable Streaming API | `true` |
+| `STREAMING_HOST` | Streaming WebSocket URL | `wss://streaming.vn.cloud.tesla.cn/streaming/` |
+| `STREAMING_RECONNECT_DELAY` | Reconnect delay | `5s` |
+
+### Optional
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `AMAP_API_KEY` | Amap API key (geocoding) | — |
+| `TOKEN_FILE` | Token storage file | `tokens.json` |
 
 ## License
 

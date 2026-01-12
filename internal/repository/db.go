@@ -59,6 +59,7 @@ func (db *DB) Migrate(ctx context.Context) error {
 		migrationAddAddressToDrives,
 		migrationAddAddressToParkings,
 		migrationAddAddressToChargingProcesses,
+		migrationCreateParkingEvents,
 	}
 
 	for _, m := range migrations {
@@ -401,4 +402,17 @@ ALTER TABLE parkings ADD COLUMN IF NOT EXISTS address JSONB;
 // 添加地址字段到 charging_processes 表
 const migrationAddAddressToChargingProcesses = `
 ALTER TABLE charging_processes ADD COLUMN IF NOT EXISTS address JSONB;
+`
+
+// 创建停车事件日志表
+const migrationCreateParkingEvents = `
+CREATE TABLE IF NOT EXISTS parking_events (
+    id BIGSERIAL PRIMARY KEY,
+    parking_id BIGINT NOT NULL REFERENCES parkings(id) ON DELETE CASCADE,
+    event_type VARCHAR(50) NOT NULL,
+    event_time TIMESTAMP WITH TIME ZONE NOT NULL,
+    details JSONB
+);
+CREATE INDEX IF NOT EXISTS idx_parking_events_parking_id ON parking_events(parking_id);
+CREATE INDEX IF NOT EXISTS idx_parking_events_event_time ON parking_events(event_time);
 `
