@@ -119,11 +119,21 @@ ws.onmessage = (event) => {
 | `STREAMING_HOST` | Streaming WebSocket 地址 | `wss://streaming.vn.cloud.tesla.cn/streaming/` |
 | `STREAMING_RECONNECT_DELAY` | 重连延迟 | `5s` |
 
-### 可选配置
+### 逆地理编码（可选）
+
+逆地理编码用于将坐标转换为可读地址，支持两种服务：
 
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
-| `AMAP_API_KEY` | 高德地图 API Key（逆地理编码） | — |
+| `AMAP_API_KEY` | [高德地图](https://lbs.amap.com/) API Key（中国区推荐） | — |
+
+- **配置 `AMAP_API_KEY`**：使用高德地图，中国区速度快、精度高
+- **不配置**：自动回退到 [Nominatim](https://nominatim.openstreetmap.org/) (OpenStreetMap)，免费、全球覆盖，限流 1 次/秒
+
+### 其他
+
+| 变量 | 说明 | 默认值 |
+|------|------|--------|
 | `TOKEN_FILE` | Token 存储文件 | `tokens.json` |
 
 ## 许可证

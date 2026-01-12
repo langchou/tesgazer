@@ -119,11 +119,21 @@ ws.onmessage = (event) => {
 | `STREAMING_HOST` | Streaming WebSocket URL | `wss://streaming.vn.cloud.tesla.cn/streaming/` |
 | `STREAMING_RECONNECT_DELAY` | Reconnect delay | `5s` |
 
-### Optional
+### Geocoding (Optional)
+
+Reverse geocoding converts coordinates to human-readable addresses. Two providers are supported:
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `AMAP_API_KEY` | Amap API key (geocoding) | — |
+| `AMAP_API_KEY` | [Amap](https://lbs.amap.com/) API key (recommended for China) | — |
+
+- **With `AMAP_API_KEY`**: Uses Amap (高德地图) for geocoding — fast and accurate in China
+- **Without `AMAP_API_KEY`**: Falls back to [Nominatim](https://nominatim.openstreetmap.org/) (OpenStreetMap) — free, worldwide coverage, rate-limited to 1 req/sec
+
+### Other
+
+| Variable | Description | Default |
+|----------|-------------|---------|
 | `TOKEN_FILE` | Token storage file | `tokens.json` |
 
 ## License
