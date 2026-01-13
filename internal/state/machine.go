@@ -76,6 +76,9 @@ type VehicleState struct {
 	ChargerCurrent     int     `json:"charger_current"`        // 充电电流
 	UsableBatteryLevel int     `json:"usable_battery_level"`   // 可用电量
 	IdealRangeKm       float64 `json:"ideal_range_km"`         // 理想续航 (km)
+	// 休眠相关
+	CanSleep         bool   `json:"can_sleep"`          // 是否满足休眠条件
+	SleepBlockReason string `json:"sleep_block_reason"` // 如果不能休眠，原因
 }
 
 // Machine 车辆状态机

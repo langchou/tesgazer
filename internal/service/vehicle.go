@@ -702,6 +702,11 @@ func (s *VehicleService) updateMachineFromData(machine *state.Machine, data *tes
 			vs.FrunkOpen = data.VehicleState.FrunkOpen != 0
 			vs.TrunkOpen = data.VehicleState.TrunkOpen != 0
 		}
+
+		// 计算是否可以休眠（仅在 online 状态下有意义）
+		blockReason := s.canFallAsleep(data)
+		vs.CanSleep = blockReason == SleepBlockNone
+		vs.SleepBlockReason = string(blockReason)
 	})
 }
 
